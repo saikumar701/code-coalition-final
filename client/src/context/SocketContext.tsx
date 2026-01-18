@@ -98,7 +98,7 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
         ({ socketId }: { socketId: SocketId }) => {
             socket.emit(SocketEvent.SYNC_DRAWING, { socketId, drawingData })
         },
-        [drawingData, socket],
+        [socket, drawingData],
     )
 
     const handleDrawingSync = useCallback(

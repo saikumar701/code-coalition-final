@@ -22,46 +22,31 @@ function DrawingEditor() {
 
 function ReachEditor() {
     const editor = useEditor()
-    const { drawingData, setDrawingData } = useAppContext()
+    const { drawingData } = useAppContext()
     const { socket } = useSocket()
 
     const handleChangeEvent = useCallback(
         (change: HistoryEntry<TLRecord>) => {
-            const snapshot = change.changes
-            // Update the drawing data in the context
-            setDrawingData(editor.store.getSnapshot())
-            // Emit the snapshot to the server
-            socket.emit(SocketEvent.DRAWING_UPDATE, { snapshot })
+            const diff = change.changes
+            socket.emit(SocketEvent.DRAWING_UPDATE, { diff })
         },
-        [editor.store, setDrawingData, socket],
+        [socket],
     )
 
     // Handle drawing updates from other clients
     const handleRemoteDrawing = useCallback(
-        ({ snapshot }: { snapshot: RecordsDiff<TLRecord> }) => {
+        ({ diff }: { diff: RecordsDiff<TLRecord> }) => {
             editor.store.mergeRemoteChanges(() => {
-                const { added, updated, removed } = snapshot
-
-                for (const record of Object.values(added)) {
-                    editor.store.put([record])
-                }
-                for (const [, to] of Object.values(updated)) {
-                    editor.store.put([to])
-                }
-                for (const record of Object.values(removed)) {
-                    editor.store.remove([record.id])
-                }
+                editor.store.applyDiff(diff)
             })
-
-            setDrawingData(editor.store.getSnapshot())
         },
-        [editor.store, setDrawingData],
+        [editor.store],
     )
 
     useEffect(() => {
         // Load the drawing data from the context
         if (drawingData && Object.keys(drawingData).length > 0) {
-            editor.store.loadSnapshot(drawingData)
+            editor.loadSnapshot(drawingData as any)
         }
     }, [])
 
@@ -78,13 +63,7 @@ function ReachEditor() {
             cleanupFunction()
             socket.off(SocketEvent.DRAWING_UPDATE)
         }
-    }, [
-        drawingData,
-        editor.store,
-        handleChangeEvent,
-        handleRemoteDrawing,
-        socket,
-    ])
+    }, [editor.store, handleChangeEvent, handleRemoteDrawing, socket])
 
     return null
 }

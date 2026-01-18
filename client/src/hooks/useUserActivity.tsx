@@ -52,9 +52,20 @@ function useUserActivity() {
 
     const handleUserTyping = useCallback(
         ({ user }: { user: RemoteUser }) => {
+            console.log('👤 handleUserTyping called with user:', {
+                username: user.username,
+                currentFile: user.currentFile,
+                cursorPosition: user.cursorPosition,
+                typing: user.typing,
+            })
             setUsers((users) => {
                 return users.map((u) => {
                     if (u.socketId === user.socketId) {
+                        console.log('✅ Updating user in context:', {
+                            username: user.username,
+                            oldCurrentFile: u.currentFile,
+                            newCurrentFile: user.currentFile,
+                        })
                         return user
                     }
                     return u
@@ -72,9 +83,22 @@ function useUserActivity() {
 
         socket.on(SocketEvent.USER_ONLINE, handleUserOnline)
         socket.on(SocketEvent.USER_OFFLINE, handleUserOffline)
-        socket.on(SocketEvent.TYPING_START, handleUserTyping)
-        socket.on(SocketEvent.TYPING_PAUSE, handleUserTyping)
-        socket.on(SocketEvent.CURSOR_MOVE, handleUserTyping)
+        socket.on(SocketEvent.TYPING_START, (data) => {
+            console.log('📝 TYPING_START received:', data)
+            handleUserTyping(data)
+        })
+        socket.on(SocketEvent.TYPING_PAUSE, (data) => {
+            console.log('⏸️ TYPING_PAUSE received:', data)
+            handleUserTyping(data)
+        })
+        socket.on(SocketEvent.CURSOR_MOVE, (data) => {
+            console.log('🖱️ CURSOR_MOVE received:', data)
+            handleUserTyping(data)
+        })
+        socket.on(SocketEvent.USER_JOINED, (data) => {
+            console.log('👥 USER_JOINED received:', data)
+            handleUserTyping(data)
+        })
 
         return () => {
             document.removeEventListener(
@@ -87,6 +111,7 @@ function useUserActivity() {
             socket.off(SocketEvent.TYPING_START)
             socket.off(SocketEvent.TYPING_PAUSE)
             socket.off(SocketEvent.CURSOR_MOVE)
+            socket.off(SocketEvent.USER_JOINED)
         }
     }, [
         socket,

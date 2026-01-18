@@ -75,7 +75,7 @@ function CopilotView() {
                 onChange={(e) => setInput(e.target.value)}
             />
             <button
-                className="mt-1 flex w-full justify-center rounded-md bg-primary p-2 font-bold text-black outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-1 flex w-full justify-center rounded-md bg-white p-2 font-bold text-black outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={generateCode}
                 disabled={isRunning}
             >

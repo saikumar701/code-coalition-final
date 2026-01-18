@@ -12,32 +12,7 @@ export function tooltipField(users: RemoteUser[]) {
         provide: (f) => showTooltip.computeN([f], (state) => state.field(f)),
     })
 }
-
-export function getCursorTooltips(users: RemoteUser[]) {
-    return users.map((user) => {
-        if (!user.typing) {
-            return null
-        }
-        let text = user.username
-        const pos = user.cursorPosition
-        if (user) {
-            text = user.username
-        }
-
-        return {
-            pos,
-            above: true,
-            strictSide: true,
-            arrow: true,
-            create: () => {
-                const dom = document.createElement("div")
-                dom.className = "cm-tooltip-cursor"
-                dom.textContent = text
-                return { dom }
-            },
-        }
-    })
-}
+// Cursor tooltips removed - cursor tracking disabled
 
 export const cursorTooltipBaseTheme = EditorView.baseTheme({
     ".cm-tooltip.cm-tooltip-cursor": {

@@ -114,7 +114,8 @@ const FormComponent = () => {
                                 type="text"
                                 name="roomId"
                                 placeholder="e.g. build-together-123"
-                                className="w-full rounded-2xl border border-gray-600 bg-gray-700/50 py-3 pl-10 pr-4 text-white placeholder-gray-400 outline-none transition focus:border-teal-500 focus:bg-gray-700/80 focus:shadow-[0_0_0_2px_rgba(13,148,136,0.5)]"
+                                disabled={status === USER_STATUS.ATTEMPTING_JOIN}
+                                className="w-full rounded-2xl border border-gray-600 bg-gray-700/50 py-3 pl-10 pr-4 text-white placeholder-gray-400 outline-none transition focus:border-teal-500 focus:bg-gray-700/80 focus:shadow-[0_0_0_2px_rgba(13,148,136,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
                                 onChange={handleInputChanges}
                                 value={currentUser.roomId}
                             />
@@ -131,7 +132,8 @@ const FormComponent = () => {
                                 type="text"
                                 name="username"
                                 placeholder="Your name"
-                                className="w-full rounded-2xl border border-gray-600 bg-gray-700/50 py-3 pl-10 pr-4 text-white placeholder-gray-400 outline-none transition focus:border-teal-500 focus:bg-gray-700/80 focus:shadow-[0_0_0_2px_rgba(13,148,136,0.5)]"
+                                disabled={status === USER_STATUS.ATTEMPTING_JOIN}
+                                className="w-full rounded-2xl border border-gray-600 bg-gray-700/50 py-3 pl-10 pr-4 text-white placeholder-gray-400 outline-none transition focus:border-teal-500 focus:bg-gray-700/80 focus:shadow-[0_0_0_2px_rgba(13,148,136,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
                                 onChange={handleInputChanges}
                                 value={currentUser.username}
                                 ref={usernameRef}
@@ -140,13 +142,15 @@ const FormComponent = () => {
                     </div>
                     <button
                         type="submit"
-                        className="mt-2 inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-teal-500 to-teal-400 px-8 py-3 text-lg font-semibold text-gray-900 transition-transform hover:scale-105 hover:shadow-[0_20px_45px_-20px_rgba(13,148,136,0.8)] active:scale-100"
+                        disabled={status === USER_STATUS.ATTEMPTING_JOIN}
+                        className="mt-2 inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-teal-500 to-teal-400 px-8 py-3 text-lg font-semibold text-gray-900 transition-transform hover:scale-105 hover:shadow-[0_20px_45px_-20px_rgba(13,148,136,0.8)] active:scale-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
                     >
-                        Join room
+                        {status === USER_STATUS.ATTEMPTING_JOIN ? "Joining..." : "Join room"}
                     </button>
                 </form>
                 <button
-                    className="text-sm font-medium text-teal-400 transition hover:text-white"
+                    disabled={status === USER_STATUS.ATTEMPTING_JOIN}
+                    className="text-sm font-medium text-teal-400 transition hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={createNewRoomId}
                 >
                     Generate a unique room ID

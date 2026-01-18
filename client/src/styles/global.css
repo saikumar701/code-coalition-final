@@ -49,6 +49,40 @@ body {
     }
 }
 
+/* Collaborative cursor and selection styles */
+@keyframes cursor-blink {
+    0%, 50% {
+        opacity: 1;
+    }
+    51%, 100% {
+        opacity: 0;
+    }
+}
+
+.cm-remote-cursor {
+    position: relative;
+    display: inline-block;
+}
+
+.cm-remote-cursor-label {
+    position: absolute;
+    top: -20px;
+    left: 0;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 11;
+    transition: opacity 0.3s ease;
+}
+
+.cm-remote-selection {
+    position: relative;
+}
+
 @keyframes up-down {
     0% {
         transform: translateY(-20px);

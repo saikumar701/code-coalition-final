@@ -1,7 +1,7 @@
 import { ICopilotContext } from "@/types/copilot"
 import { createContext, ReactNode, useContext, useState } from "react"
 import toast from "react-hot-toast"
-import axiosInstance from "../api/pollinationsApi"
+import axios from "axios"
 
 const CopilotContext = createContext<ICopilotContext | null>(null)
 
@@ -30,7 +30,7 @@ const CopilotContextProvider = ({ children }: { children: ReactNode }) => {
 
             toast.loading("Generating code...")
             setIsRunning(true)
-            const response = await axiosInstance.post("/", {
+            const response = await axios.post("/api/copilot/generate", {
                 messages: [
                     {
                         role: "system",
@@ -45,15 +45,25 @@ const CopilotContextProvider = ({ children }: { children: ReactNode }) => {
                 model: "mistral",
                 private: true,
             })
+            
             if (response.data) {
                 toast.success("Code generated successfully")
-                const code = response.data
+                // Handle the Pollinations API response structure
+                let code = ""
+                if (response.data?.choices?.[0]?.message?.content) {
+                    code = response.data.choices[0].message.content
+                } else if (typeof response.data === "string") {
+                    code = response.data
+                } else {
+                    code = JSON.stringify(response.data)
+                }
+                
                 if (code) setOutput(code)
             }
             setIsRunning(false)
             toast.dismiss()
         } catch (error) {
-            console.error(error)
+            console.error("Copilot error:", error)
             setIsRunning(false)
             toast.dismiss()
             toast.error("Failed to generate the code")

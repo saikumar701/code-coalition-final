@@ -10,10 +10,10 @@ interface User {
 
 interface RemoteUser extends User {
     status: USER_CONNECTION_STATUS
-    cursorPosition: number
     typing: boolean
     currentFile: string
     socketId: string
+    cursorPosition?: number
     selectionStart?: number
     selectionEnd?: number
 }

@@ -14,6 +14,7 @@ enum SocketEvent {
     DIRECTORY_DELETED = "directory-deleted",
     FILE_CREATED = "file-created",
     FILE_UPDATED = "file-updated",
+    FILE_OPENED = "file-opened",
     FILE_RENAMED = "file-renamed",
     FILE_DELETED = "file-deleted",
     USER_OFFLINE = "offline",

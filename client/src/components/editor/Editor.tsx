@@ -18,7 +18,7 @@ import CodeMirror, {
 import { EditorView } from "@codemirror/view"
 import { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import toast from "react-hot-toast"
-import { collaborativeHighlighting, updateRemoteUsers } from "./collaborativeHighlighting"
+import { collaborativeHighlighting, updateRemoteUsers } from "@/extensions/collaborativeHighlighting"
 
 function Editor() {
     const { users, currentUser } = useAppContext()
@@ -149,7 +149,6 @@ function Editor() {
                 fontSize: fontSize + "px",
                 height: viewHeight,
                 position: "relative",
-                backgroundColor: "#1E1E1E", // Dark background for the editor
             }}
         />
     )

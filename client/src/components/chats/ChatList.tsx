@@ -2,6 +2,27 @@ import { useAppContext } from "@/context/AppContext"
 import { useChatRoom } from "@/context/ChatContext"
 import { SyntheticEvent, useEffect, useRef } from "react"
 
+// Tailwind background color classes
+const colors = [
+    "bg-blue-700",
+    "bg-green-700",
+    "bg-purple-700",
+    "bg-red-700",
+    "bg-yellow-700",
+    "bg-pink-700",
+    "bg-indigo-700",
+    "bg-teal-700",
+]
+
+// Deterministic color generator based on username
+function getUserColor(username: string) {
+    let hash = 0
+    for (let i = 0; i < username.length; i++) {
+        hash = username.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    return colors[Math.abs(hash) % colors.length]
+}
+
 function ChatList() {
     const {
         messages,
@@ -10,6 +31,7 @@ function ChatList() {
         lastScrollHeight,
         setLastScrollHeight,
     } = useChatRoom()
+
     const { currentUser } = useAppContext()
     const messagesContainerRef = useRef<HTMLDivElement | null>(null)
 
@@ -39,27 +61,27 @@ function ChatList() {
             ref={messagesContainerRef}
             onScroll={handleScroll}
         >
-            {/* Chat messages */}
             {messages.map((message, index) => {
+                const bubbleColor = getUserColor(message.username)
+
                 return (
                     <div
                         key={index}
                         className={
-                            "mb-2 w-[80%] self-end break-words rounded-md bg-dark px-3 py-2" +
-                            (message.username === currentUser.username
-                                ? " ml-auto "
-                                : "")
+                            `mb-2 w-[80%] self-end break-words rounded-md px-3 py-2 
+                            ${message.username === currentUser.username ? "ml-auto" : ""} 
+                            ${bubbleColor}`
                         }
                     >
                         <div className="flex justify-between">
-                            <span className="text-xs text-primary">
+                            <span className="text-xs text-white">
                                 {message.username}
                             </span>
-                            <span className="text-xs text-white">
+                            <span className="text-xs text-gray-200">
                                 {message.timestamp}
                             </span>
                         </div>
-                        <p className="py-1">{message.message}</p>
+                        <p className="py-1 text-white">{message.message}</p>
                     </div>
                 )
             })}
