@@ -12,10 +12,9 @@ import { hyperLink } from "@uiw/codemirror-extensions-hyper-link"
 import { LanguageName, loadLanguage } from "@uiw/codemirror-extensions-langs"
 import CodeMirror, {
     Extension,
-    ViewUpdate,
     scrollPastEnd,
 } from "@uiw/react-codemirror"
-import { EditorView } from "@codemirror/view"
+import { EditorView as CM6EditorView } from "@codemirror/view"
 import { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import toast from "react-hot-toast"
 import { collaborativeHighlighting, updateRemoteUsers } from "@/extensions/collaborativeHighlighting"
@@ -28,88 +27,136 @@ function Editor() {
     const { viewHeight } = useResponsive()
     const [timeOut, setTimeOut] = useState(setTimeout(() => {}, 0))
     const filteredUsers = useMemo(
-        () => users.filter((u) => u.username !== currentUser.username),
-        [users, currentUser],
+        () => users.filter((u) => u.currentFile === activeFile?.id && u.username !== currentUser.username),
+        [users, currentUser, activeFile?.id],
     )
     const [extensions, setExtensions] = useState<Extension[]>([])
     const editorRef = useRef<any>(null)
-    const [lastCursorPosition, setLastCursorPosition] = useState<number>(0)
-    const [lastSelection, setLastSelection] = useState<{start?: number, end?: number}>({})
+    const editorViewRef = useRef<CM6EditorView | null>(null)
+    const lastCursorPositionRef = useRef<number>(0)
+    const lastSelectionRef = useRef<{ from: number; to: number }>({ from: 0, to: 0 })
     const cursorMoveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-    const onCodeChange = (code: string, view: ViewUpdate) => {
+    const onCodeChange = (code: string) => {
         if (!activeFile) return
 
         const file: FileSystemItem = { ...activeFile, content: code }
         setActiveFile(file)
 
         // Get cursor position and selection range
-        const selection = view.state?.selection?.main
-        const cursorPosition = selection?.head || 0
-        const selectionStart = selection?.from
-        const selectionEnd = selection?.to
+        const view = editorViewRef.current
+        if (view) {
+            const selection = view.state.selection.main
+            const cursorPosition = selection.head
+            const selectionStart = selection.from
+            const selectionEnd = selection.to
 
-        // Emit cursor and selection data
-        socket.emit(SocketEvent.TYPING_START, {
-            cursorPosition,
-            selectionStart,
-            selectionEnd
-        })
+            console.log('⌨️ TYPING_START emitted:', {
+                fileId: activeFile.id,
+                cursorPosition,
+            })
+            // Emit cursor and selection data
+            socket.emit(SocketEvent.TYPING_START, {
+                fileId: activeFile.id,
+                cursorPosition,
+                selectionStart,
+                selectionEnd
+            })
+        }
+
         socket.emit(SocketEvent.FILE_UPDATED, {
             fileId: activeFile.id,
             newContent: code,
         })
         clearTimeout(timeOut)
 
+        // Debounce typing pause
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current)
+        }
+
+        typingTimeoutRef.current = setTimeout(() => {
+            console.log('⏸️ TYPING_PAUSE emitted')
+            socket.emit(SocketEvent.TYPING_PAUSE, {
+                fileId: activeFile.id,
+            })
+        }, 1000)
+
         const newTimeOut = setTimeout(
-            () => socket.emit(SocketEvent.TYPING_PAUSE),
+            () => socket.emit(SocketEvent.FILE_UPDATED, {
+                fileId: activeFile.id,
+                newContent: code,
+            }),
             1000,
         )
         setTimeOut(newTimeOut)
     }
 
-    // Handle cursor/selection changes without typing
-    const handleSelectionChange = useCallback((view: ViewUpdate) => {
-        if (!view.selectionSet) return
+    // Handle cursor/selection changes without typing (debounced)
+    const handleSelectionChange = useCallback((update: any) => {
+        if (!update.selectionSet) return // Only handle selection changes
+        if (!update.view) return
 
-        const selection = view.state?.selection?.main
-        const cursorPosition = selection?.head || 0
-        const selectionStart = selection?.from
-        const selectionEnd = selection?.to
+        const view = update.view
+        const selection = view.state.selection.main
+        const cursorPosition = selection.head
+        const selectionStart = selection.from
+        const selectionEnd = selection.to
 
         // Check if cursor or selection actually changed
-        const cursorChanged = cursorPosition !== lastCursorPosition
-        const selectionChanged = selectionStart !== lastSelection.start || selectionEnd !== lastSelection.end
+        const cursorChanged = cursorPosition !== lastCursorPositionRef.current
+        const selectionChanged = 
+            selectionStart !== lastSelectionRef.current.from || 
+            selectionEnd !== lastSelectionRef.current.to
 
-        if (cursorChanged || selectionChanged) {
-            setLastCursorPosition(cursorPosition)
-            setLastSelection({ start: selectionStart, end: selectionEnd })
+        if (!cursorChanged && !selectionChanged) return
 
-            // Clear existing timeout
-            if (cursorMoveTimeoutRef.current) {
-                clearTimeout(cursorMoveTimeoutRef.current)
-            }
+        lastCursorPositionRef.current = cursorPosition
+        lastSelectionRef.current = { from: selectionStart, to: selectionEnd }
 
-            // Debounce cursor move events
-            cursorMoveTimeoutRef.current = setTimeout(() => {
-                socket.emit(SocketEvent.CURSOR_MOVE, {
-                    cursorPosition,
-                    selectionStart,
-                    selectionEnd
-                })
-            }, 100) // 100ms debounce
+        // Clear existing timeout
+        if (cursorMoveTimeoutRef.current) {
+            clearTimeout(cursorMoveTimeoutRef.current)
         }
-    }, [lastCursorPosition, lastSelection, socket])
+
+        // Debounce cursor move events
+        cursorMoveTimeoutRef.current = setTimeout(() => {
+            if (!activeFile) return
+            
+            console.log('➡️ CURSOR_MOVE emitted:', {
+                fileId: activeFile.id,
+                cursorPosition,
+            })
+            
+            socket.emit(SocketEvent.CURSOR_MOVE, {
+                fileId: activeFile.id,
+                cursorPosition,
+                selectionStart,
+                selectionEnd
+            })
+        }, 100) // 100ms debounce
+    }, [socket, activeFile])
 
     // Listen wheel event to zoom in/out and prevent page reload
     usePageEvents()
+
+    // Emit FILE_OPENED when user switches files
+    useEffect(() => {
+        if (activeFile && socket) {
+            console.log('📂 FILE_OPENED emitted:', activeFile.id)
+            socket.emit(SocketEvent.FILE_OPENED, {
+                fileId: activeFile.id,
+            })
+        }
+    }, [activeFile?.id, socket])
 
     useEffect(() => {
         const extensions = [
             color,
             hyperLink,
             collaborativeHighlighting(),
-            EditorView.updateListener.of(handleSelectionChange),
+            CM6EditorView.updateListener.of(handleSelectionChange),
             scrollPastEnd(),
         ]
         const langExt = loadLanguage(language.toLowerCase() as LanguageName)
@@ -127,10 +174,12 @@ function Editor() {
         setExtensions(extensions)
     }, [filteredUsers, language, handleSelectionChange])
 
-    // Update remote users when filteredUsers changes
+    // Update remote users when filteredUsers changes and once the view is ready
     useEffect(() => {
-        if (editorRef.current?.view) {
-            editorRef.current.view.dispatch({
+        const view = editorRef.current?.view
+        if (view) {
+            console.log('🔄 Updating remote users:', filteredUsers.length)
+            view.dispatch({
                 effects: updateRemoteUsers.of(filteredUsers)
             })
         }

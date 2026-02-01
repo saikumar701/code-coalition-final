@@ -49,14 +49,12 @@ const Terminal = ({ onClose, variant = "modal" }: TerminalProps) => {
             lines: string[]
             isError?: boolean
         }) => {
-            setLines((prev) => [
-                ...prev,
-                ...lines.map((text) => ({
-                    id: uuidv4(),
-                    text,
-                    role: isError ? "error" : "output",
-                })),
-            ])
+            const newLines: TerminalLine[] = lines.map((text) => ({
+                id: uuidv4(),
+                text,
+                role: isError ? "error" : "system",
+            }))
+            setLines((prev) => [...prev, ...newLines])
         }
         socket.on(SocketEvent.TERMINAL_OUTPUT, handleOutput)
         return () => {

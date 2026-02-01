@@ -73,7 +73,7 @@ class CursorWidget extends WidgetType {
             top: -20px;
             left: 0;
             background-color: ${color};
-            color: white;
+            color: randomColor();
             padding: 2px 6px;
             border-radius: 3px;
             font-size: 11px;

@@ -4,8 +4,12 @@ import Toast from "./components/toast/Toast"
 import EditorPage from "./pages/EditorPage"
 import { RunCodeContextProvider } from "./context/RunCodeContext"
 import HomePage from "./pages/HomePage"
+import useUserActivity from "./hooks/useUserActivity"
 
 const App = () => {
+    // Register socket listeners for user presence/cursor updates once at the app level.
+    useUserActivity()
+
     return (
         <RunCodeContextProvider>
             <Router>

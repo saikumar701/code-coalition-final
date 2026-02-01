@@ -40,7 +40,9 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
     const socket: Socket = useMemo(
         () =>
             io(BACKEND_URL, {
-                reconnectionAttempts: 2,
+                reconnectionAttempts: 5,
+                transports: ["websocket"], // prefer websocket to avoid long-poll timeouts
+                autoConnect: true,
             }),
         [],
     )
