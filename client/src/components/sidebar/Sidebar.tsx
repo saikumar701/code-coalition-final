@@ -61,6 +61,10 @@ function Sidebar() {
                     icon={viewIcons[VIEWS.CHATS]}
                 />
                 <SidebarButton
+                    viewName={VIEWS.FILE_SHARING}
+                    icon={viewIcons[VIEWS.FILE_SHARING]}
+                />
+                <SidebarButton
                     viewName={VIEWS.COPILOT}
                     icon={viewIcons[VIEWS.COPILOT]}
                 />

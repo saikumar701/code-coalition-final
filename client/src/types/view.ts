@@ -1,6 +1,7 @@
 enum VIEWS {
     FILES = "FILES",
     CHATS = "CHATS",
+    FILE_SHARING = "FILE_SHARING",
     CLIENTS = "CLIENTS",
     RUN = "RUN",
     COPILOT = "COPILOT",

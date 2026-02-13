@@ -4,6 +4,7 @@ import DrawingEditor from "../components/drawing/DrawingEditor"
 import LeftSidebar from "../components/LeftSidebar"
 import FileStructureView from "../components/files/FileStructureView"
 import ChatsView from "../components/sidebar/sidebar-views/ChatsView"
+import FileSharingView from "../components/sidebar/sidebar-views/FileSharingView"
 import CopilotView from "../components/sidebar/sidebar-views/CopilotView"
 import SettingsView from "../components/sidebar/sidebar-views/SettingsView"
 import UsersView from "../components/sidebar/sidebar-views/UsersView"
@@ -103,6 +104,8 @@ const EditorPage = () => {
                 return <FileStructureView />
             case "chat":
                 return <ChatsView />
+            case "file-sharing":
+                return <FileSharingView />
             case "copilot":
                 return <CopilotView />
             case "clients":

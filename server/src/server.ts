@@ -48,6 +48,13 @@ const workspaceRoot = path.resolve(process.cwd(), ".workspaces")
 const roomFileTrees = new Map<string, WorkspaceFileSystemItem>()
 const roomTrackedPaths = new Map<string, Set<string>>()
 const roomSyncTimers = new Map<string, NodeJS.Timeout>()
+const maxFileShareEnvValue = Number(process.env.FILE_SHARE_MAX_SIZE_MB || "20")
+const maxFileShareSizeMb =
+	Number.isFinite(maxFileShareEnvValue) && maxFileShareEnvValue > 0
+		? maxFileShareEnvValue
+		: 20
+const maxFileShareSizeBytes = maxFileShareSizeMb * 1024 * 1024
+const maxFileShareNameLength = 255
 
 interface WorkspaceFileSystemItem {
 	id: string
@@ -61,6 +68,27 @@ interface WorkspaceEntry {
 	relativePath: string
 	type: "file" | "directory"
 	content?: string
+}
+
+interface IncomingSharedFile {
+	id?: string
+	name?: string
+	mimeType?: string
+	size?: number
+	dataUrl?: string
+}
+
+interface SharedFilePayload {
+	id: string
+	name: string
+	mimeType: string
+	size: number
+	dataUrl: string
+	senderUsername: string
+	senderSocketId: string
+	recipientSocketId: string | null
+	roomId: string
+	sentAt: string
 }
 
 if (!fs.existsSync(workspaceRoot)) {
@@ -240,6 +268,26 @@ function getUserBySocketId(socketId: SocketId): User | null {
 		return null
 	}
 	return user
+}
+
+function getBase64DecodedSize(base64Value: string): number {
+	const trimmed = base64Value.replace(/\s/g, "")
+	const paddingMatch = trimmed.match(/=+$/)
+	const paddingLength = paddingMatch ? paddingMatch[0].length : 0
+	return Math.max(0, Math.floor((trimmed.length * 3) / 4) - paddingLength)
+}
+
+function parseDataUrl(dataUrl: string): { mimeType: string; size: number } | null {
+	const dataUrlMatch = dataUrl.match(/^data:([^;]*);base64,([\s\S]+)$/)
+	if (!dataUrlMatch) return null
+
+	const mimeType =
+		dataUrlMatch[1]?.trim() || "application/octet-stream"
+	const encodedBody = dataUrlMatch[2]
+	return {
+		mimeType,
+		size: getBase64DecodedSize(encodedBody),
+	}
 }
 
 io.on("connection", (socket) => {
@@ -462,6 +510,110 @@ io.on("connection", (socket) => {
 			.to(roomId)
 			.emit(SocketEvent.RECEIVE_MESSAGE, { message })
 	})
+
+	socket.on(
+		SocketEvent.SEND_FILE_SHARE,
+		({
+			file,
+			recipientSocketId,
+		}: {
+			file: IncomingSharedFile
+			recipientSocketId?: string | null
+		}) => {
+			const sender = getUserBySocketId(socket.id)
+			if (!sender) return
+
+			const emitFileShareError = (message: string) => {
+				io.to(socket.id).emit(SocketEvent.FILE_SHARE_ERROR, { message })
+			}
+
+			if (!file || typeof file !== "object") {
+				emitFileShareError("Invalid file payload.")
+				return
+			}
+
+			const fileName =
+				typeof file.name === "string" ? file.name.trim() : ""
+			if (!fileName) {
+				emitFileShareError("File name is required.")
+				return
+			}
+			if (fileName.length > maxFileShareNameLength) {
+				emitFileShareError("File name is too long.")
+				return
+			}
+
+			const dataUrl = typeof file.dataUrl === "string" ? file.dataUrl : ""
+			if (!dataUrl) {
+				emitFileShareError("File content is missing.")
+				return
+			}
+
+			const parsedData = parseDataUrl(dataUrl)
+			if (!parsedData) {
+				emitFileShareError("Invalid file encoding. Please upload again.")
+				return
+			}
+
+			if (
+				parsedData.size <= 0 ||
+				parsedData.size > maxFileShareSizeBytes
+			) {
+				emitFileShareError(
+					`File is too large. Maximum allowed size is ${maxFileShareSizeMb}MB.`,
+				)
+				return
+			}
+
+			let targetSocketId: string | null = null
+			if (recipientSocketId) {
+				const targetUser = getUserBySocketId(recipientSocketId)
+				if (!targetUser || targetUser.roomId !== sender.roomId) {
+					emitFileShareError("Selected user is no longer in this room.")
+					return
+				}
+
+				if (targetUser.socketId === socket.id) {
+					emitFileShareError(
+						"Choose another user or share with all users.",
+					)
+					return
+				}
+
+				targetSocketId = targetUser.socketId
+			}
+
+			const sharedFilePayload: SharedFilePayload = {
+				id:
+					typeof file.id === "string" && file.id.trim().length > 0
+						? file.id
+						: `${socket.id}-${Date.now()}`,
+				name: fileName,
+				mimeType:
+					typeof file.mimeType === "string" && file.mimeType.trim()
+						? file.mimeType.trim()
+						: parsedData.mimeType,
+				size: parsedData.size,
+				dataUrl,
+				senderUsername: sender.username,
+				senderSocketId: sender.socketId,
+				recipientSocketId: targetSocketId,
+				roomId: sender.roomId,
+				sentAt: new Date().toISOString(),
+			}
+
+			if (targetSocketId) {
+				io.to(targetSocketId).emit(SocketEvent.RECEIVE_FILE_SHARE, {
+					file: sharedFilePayload,
+				})
+				return
+			}
+
+			socket.broadcast
+				.to(sender.roomId)
+				.emit(SocketEvent.RECEIVE_FILE_SHARE, { file: sharedFilePayload })
+		},
+	)
 
 		// Handle cursor movement
 		// ================= CURSOR MOVE (FIXED) =================

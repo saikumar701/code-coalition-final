@@ -1,4 +1,5 @@
 import { useChatRoom } from "@/context/ChatContext"
+import { useFileShare } from "@/context/FileShareContext"
 import { useViews } from "@/context/ViewContext"
 import { VIEWS } from "@/types/view"
 import { useState } from "react"
@@ -14,6 +15,7 @@ const ViewButton = ({ viewName, icon }: ViewButtonProps) => {
     const { activeView, setActiveView, isSidebarOpen, setIsSidebarOpen } =
         useViews()
     const { isNewMessage } = useChatRoom()
+    const { isNewFileShare } = useFileShare()
     const [showTooltip, setShowTooltip] = useState(true)
 
     const handleViewClick = (viewName: VIEWS) => {
@@ -39,6 +41,9 @@ const ViewButton = ({ viewName, icon }: ViewButtonProps) => {
                 <div className="flex items-center justify-center">{icon}</div>
                 {/* Show dot for new message in chat View Button */}
                 {viewName === VIEWS.CHATS && isNewMessage && (
+                    <div className="absolute right-0 top-0 h-3 w-3 rounded-full bg-primary"></div>
+                )}
+                {viewName === VIEWS.FILE_SHARING && isNewFileShare && (
                     <div className="absolute right-0 top-0 h-3 w-3 rounded-full bg-primary"></div>
                 )}
             </button>
