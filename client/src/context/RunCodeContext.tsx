@@ -27,7 +27,9 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
     const { activeFile } = useFileSystem()
     const [input, setInput] = useState<string>("")
     const [output, setOutput] = useState<string>("")
+    const [outputMode, setOutputMode] = useState<"text" | "html">("text")
     const [isRunning, setIsRunning] = useState<boolean>(false)
+    const [hasRunError, setHasRunError] = useState<boolean>(false)
     const [supportedLanguages, setSupportedLanguages] = useState<Language[]>([])
     const [selectedLanguage, setSelectedLanguage] = useState<Language>({
         language: "",
@@ -72,7 +74,12 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
 
         const extension = activeFile.name.split(".").pop()
         if (extension === "html") {
-            setOutput(activeFile.content || "")
+            const htmlPreview = activeFile.content?.trim()
+                ? activeFile.content
+                : "<!doctype html><html><body style='margin:0;padding:1rem;font-family:Arial,sans-serif;background:#fff;color:#111;'>No HTML content to preview.</body></html>"
+            setOutput(htmlPreview)
+            setOutputMode("html")
+            setHasRunError(false)
             return
         }
 
@@ -84,6 +91,8 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
             }
 
             setIsRunning(true)
+            setHasRunError(false)
+            setOutputMode("text")
             const { language, version } = selectedLanguage
 
             const response = await axiosInstance.post("/execute", {
@@ -94,14 +103,26 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
             })
             if (response.data.run.stderr) {
                 setOutput(response.data.run.stderr)
+                setHasRunError(true)
             } else {
                 setOutput(response.data.run.stdout)
+                setHasRunError(false)
             }
+            setOutputMode("text")
             setIsRunning(false)
             toast.dismiss()
         } catch (error: any) {
-            console.error(error.response.data)
-            console.error(error.response.data.error)
+            if (error?.response?.data) {
+                console.error(error.response.data)
+                console.error(error.response.data.error)
+            }
+            const errorMessage =
+                error?.response?.data?.error ||
+                error?.message ||
+                "Failed to run the code"
+            setOutput(errorMessage)
+            setOutputMode("text")
+            setHasRunError(true)
             setIsRunning(false)
             toast.dismiss()
             toast.error("Failed to run the code")
@@ -113,7 +134,9 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
             value={{
                 setInput,
                 output,
+                outputMode,
                 isRunning,
+                hasRunError,
                 supportedLanguages,
                 selectedLanguage,
                 setSelectedLanguage,

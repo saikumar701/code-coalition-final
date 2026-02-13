@@ -5,7 +5,6 @@ import { FileContextProvider } from "./FileContext.jsx"
 import { RunCodeContextProvider } from "./RunCodeContext.jsx"
 import { SettingContextProvider } from "./SettingContext.jsx"
 import { SocketProvider } from "./SocketContext.jsx"
-import { ViewContextProvider } from "./ViewContext.js"
 import { CopilotContextProvider } from "./CopilotContext.js"
 import { FileShareContextProvider } from "./FileShareContext.js"
 
@@ -14,19 +13,17 @@ function AppProvider({ children }: { children: ReactNode }) {
         <AppContextProvider>
             <SocketProvider>
                 <SettingContextProvider>
-                    <ViewContextProvider>
-                        <FileContextProvider>
-                            <CopilotContextProvider>
-                                <RunCodeContextProvider>
-                                    <ChatContextProvider>
-                                        <FileShareContextProvider>
-                                            {children}
-                                        </FileShareContextProvider>
-                                    </ChatContextProvider>
-                                </RunCodeContextProvider>
-                            </CopilotContextProvider>
-                        </FileContextProvider>
-                    </ViewContextProvider>
+                    <FileContextProvider>
+                        <CopilotContextProvider>
+                            <RunCodeContextProvider>
+                                <ChatContextProvider>
+                                    <FileShareContextProvider>
+                                        {children}
+                                    </FileShareContextProvider>
+                                </ChatContextProvider>
+                            </RunCodeContextProvider>
+                        </CopilotContextProvider>
+                    </FileContextProvider>
                 </SettingContextProvider>
             </SocketProvider>
         </AppContextProvider>

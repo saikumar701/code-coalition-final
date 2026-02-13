@@ -7,7 +7,9 @@ interface Language {
 interface RunContext {
     setInput: (input: string) => void
     output: string
+    outputMode: "text" | "html"
     isRunning: boolean
+    hasRunError: boolean
     supportedLanguages: Language[]
     selectedLanguage: Language
     setSelectedLanguage: (language: Language) => void

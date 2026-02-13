@@ -8,6 +8,7 @@ import { useLocation, useNavigate } from "react-router-dom"
 import { v4 as uuidv4 } from "uuid"
 import logo from "@/assets/logo.svg"
 import { Key, User } from "lucide-react"
+import { getClientSessionId } from "@/utils/session"
 
 const FormComponent = () => {
     const location = useLocation()
@@ -15,6 +16,7 @@ const FormComponent = () => {
     const { socket } = useSocket()
 
     const usernameRef = useRef<HTMLInputElement | null>(null)
+    const joinTimeoutRef = useRef<number | null>(null)
     const navigate = useNavigate()
 
     const createNewRoomId = () => {
@@ -30,16 +32,19 @@ const FormComponent = () => {
     }
 
     const validateForm = () => {
-        if (currentUser.username.trim().length === 0) {
+        const username = currentUser.username.trim()
+        const roomId = currentUser.roomId.trim()
+
+        if (username.length === 0) {
             toast.error("Enter your username")
             return false
-        } else if (currentUser.roomId.trim().length === 0) {
+        } else if (roomId.length === 0) {
             toast.error("Enter a room id")
             return false
-        } else if (currentUser.roomId.trim().length < 5) {
+        } else if (roomId.length < 5) {
             toast.error("ROOM Id must be at least 5 characters long")
             return false
-        } else if (currentUser.username.trim().length < 3) {
+        } else if (username.length < 3) {
             toast.error("Username must be at least 3 characters long")
             return false
         }
@@ -50,51 +55,83 @@ const FormComponent = () => {
         e.preventDefault()
         if (status === USER_STATUS.ATTEMPTING_JOIN) return
         if (!validateForm()) return
-        toast.loading("Joining room...")
-        setStatus(USER_STATUS.ATTEMPTING_JOIN)
-        const sendJoin = () => socket.emit(SocketEvent.JOIN_REQUEST, currentUser)
 
-        if (socket.connected) {
-            sendJoin()
-        } else {
-            socket.connect()
-            socket.once("connect", sendJoin)
+        const joinPayload = {
+            username: currentUser.username.trim(),
+            roomId: currentUser.roomId.trim(),
+            sessionId: getClientSessionId(),
         }
+
+        setCurrentUser({
+            username: joinPayload.username,
+            roomId: joinPayload.roomId,
+        })
+        toast.loading("Joining room...", { id: "join-room" })
+        setStatus(USER_STATUS.ATTEMPTING_JOIN)
+
+        if (!socket.connected) {
+            socket.connect()
+        }
+        // Socket.io buffers emits until connected, so this handles both connected/connecting states.
+        socket.emit(SocketEvent.JOIN_REQUEST, joinPayload)
+
+        if (joinTimeoutRef.current !== null) {
+            window.clearTimeout(joinTimeoutRef.current)
+        }
+        joinTimeoutRef.current = window.setTimeout(() => {
+            setStatus(USER_STATUS.CONNECTION_FAILED)
+            toast.dismiss("join-room")
+            toast.error("Join request timed out. Please try again.")
+            joinTimeoutRef.current = null
+        }, 9000)
     }
 
     useEffect(() => {
         if (currentUser.roomId.length > 0) return
         if (location.state?.roomId) {
             setCurrentUser({ ...currentUser, roomId: location.state.roomId })
-            if (currentUser.username.length === 0) {
+            if (currentUser.username.trim().length === 0) {
                 toast.success("Enter your username")
             }
         }
     }, [currentUser, location.state?.roomId, setCurrentUser])
 
     useEffect(() => {
-        if (status === USER_STATUS.DISCONNECTED && !socket.connected) {
-            socket.connect()
+        if (status !== USER_STATUS.JOINED) {
             return
         }
 
-        const isRedirect = sessionStorage.getItem("redirect") || false
-
-        if (status === USER_STATUS.JOINED && !isRedirect) {
-            const username = currentUser.username
-            sessionStorage.setItem("redirect", "true")
-            navigate(`/editor/${currentUser.roomId}`, {
-                state: {
-                    username,
-                },
-            })
-        } else if (status === USER_STATUS.JOINED && isRedirect) {
-            sessionStorage.removeItem("redirect")
-            setStatus(USER_STATUS.DISCONNECTED)
-            socket.disconnect()
-            socket.connect()
+        toast.dismiss("join-room")
+        if (joinTimeoutRef.current !== null) {
+            window.clearTimeout(joinTimeoutRef.current)
+            joinTimeoutRef.current = null
         }
-    }, [currentUser, location.state?.redirect, navigate, setStatus, socket, status])
+
+        navigate(`/editor/${currentUser.roomId}`, {
+            replace: true,
+            state: {
+                username: currentUser.username,
+            },
+        })
+    }, [currentUser.roomId, currentUser.username, navigate, status])
+
+    useEffect(() => {
+        if (status !== USER_STATUS.ATTEMPTING_JOIN) {
+            toast.dismiss("join-room")
+            if (joinTimeoutRef.current !== null) {
+                window.clearTimeout(joinTimeoutRef.current)
+                joinTimeoutRef.current = null
+            }
+        }
+    }, [status])
+
+    useEffect(() => {
+        return () => {
+            if (joinTimeoutRef.current !== null) {
+                window.clearTimeout(joinTimeoutRef.current)
+            }
+        }
+    }, [])
 
     return (
         <div className="w-full">

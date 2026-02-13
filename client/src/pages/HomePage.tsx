@@ -1,5 +1,6 @@
 import { useState } from "react"
 import illustration from "@/assets/illustration.png"
+import trainCatGif from "@/assets/misskalem-cat-14030_512.gif"
 import FormComponent from "@/components/forms/FormComponent"
 
 type MenuType = "features" | "about" | null
@@ -8,7 +9,7 @@ function HomePage() {
     const [openMenu, setOpenMenu] = useState<MenuType>(null)
 
     return (
-        <div className="h-screen overflow-hidden bg-gray-950 text-gray-100">
+        <div className="relative h-screen overflow-hidden bg-gray-950 text-gray-100">
             {/* NAVBAR */}
             <nav className="relative z-50 border-b border-gray-800">
                 <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
@@ -95,11 +96,17 @@ function HomePage() {
                 </section>
 
                 <section className="flex items-center justify-center">
-                    <div className="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-5 shadow-lg">
-                        <FormComponent />
+                    <div className="w-full max-w-md">
+                        <div className="w-full rounded-xl border border-gray-800 bg-gray-900 p-5 shadow-lg">
+                            <FormComponent />
+                        </div>
                     </div>
                 </section>
             </main>
+
+            <div className="homepage-train-track" aria-hidden="true">
+                <img src={trainCatGif} alt="" className="homepage-train-cat" />
+            </div>
         </div>
     )
 }

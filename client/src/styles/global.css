@@ -149,6 +149,133 @@ select {
     }
 }
 
+@keyframes homepage-train-traverse {
+    0% {
+        transform: translateX(-210px) scaleX(1);
+    }
+    45% {
+        transform: translateX(calc(100vw - 230px)) scaleX(1);
+    }
+    50% {
+        transform: translateX(calc(100vw - 230px)) scaleX(-1);
+    }
+    95% {
+        transform: translateX(-210px) scaleX(-1);
+    }
+    100% {
+        transform: translateX(-210px) scaleX(1);
+    }
+}
+
+.homepage-train-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 6px;
+    height: 110px;
+    pointer-events: none;
+    z-index: 30;
+}
+
+.homepage-train-track::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 6px;
+    height: 2px;
+    background: linear-gradient(90deg, rgba(57, 78, 108, 0), rgba(57, 78, 108, 0.75), rgba(57, 78, 108, 0));
+}
+
+.homepage-train-cat {
+    position: absolute;
+    bottom: 8px;
+    width: 80px;
+    max-width: 30vw;
+    transform-origin: center center;
+    filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.35));
+    animation: homepage-train-traverse 15s linear infinite;
+}
+
+.editor-error-cat {
+    position: absolute;
+    left: 8px;
+    bottom: 6px;
+    width: 44px;
+    z-index: 30;
+    pointer-events: none;
+    user-select: none;
+    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
+}
+
+.editor-peek-cat-wrap {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 52px;
+    height: 36px;
+    overflow: hidden;
+    z-index: 24;
+    pointer-events: none;
+    user-select: none;
+}
+
+.editor-peek-cat {
+    position: absolute;
+    left: -18px;
+    bottom: -20px;
+    width: 84px;
+    transform: scaleX(-1);
+    transform-origin: center center;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+}
+
+@media screen and (max-width: 1024px) {
+    .homepage-train-cat {
+        width: 115px;
+    }
+
+    .editor-peek-cat-wrap {
+        width: 48px;
+        height: 34px;
+    }
+
+    .editor-peek-cat {
+        left: -16px;
+        bottom: -18px;
+        width: 76px;
+    }
+}
+
+@media screen and (max-width: 768px) {
+    .homepage-train-track {
+        height: 92px;
+    }
+
+    .homepage-train-cat {
+        width: 96px;
+    }
+    .editor-error-cat {
+        width: 40px;
+    }
+
+    .editor-peek-cat-wrap {
+        width: 42px;
+        height: 30px;
+    }
+
+    .editor-peek-cat {
+        left: -14px;
+        bottom: -16px;
+        width: 66px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .homepage-train-cat {
+        animation: none;
+    }
+}
 
 
 @layer base {

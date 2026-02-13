@@ -65,6 +65,9 @@ function TerminalComponent() {
         window.addEventListener("resize", handleWindowResize)
 
         const terminalInputDisposable = term.onData((data) => {
+            if (data.includes("\r")) {
+                window.dispatchEvent(new Event("terminal:command-submit"))
+            }
             socket.emit(SocketEvent.TERMINAL_EXECUTE, { input: data })
         })
 
@@ -111,6 +114,7 @@ function TerminalComponent() {
     const clearTerminal = () => {
         socket.emit(SocketEvent.TERMINAL_RESET)
         xtermRef.current?.clear()
+        window.dispatchEvent(new Event("terminal:cleared"))
         xtermRef.current?.focus()
     }
 

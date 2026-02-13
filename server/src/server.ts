@@ -299,20 +299,61 @@ io.on("connection", (socket) => {
 	}
 
 	// Handle user actions
-	socket.on(SocketEvent.JOIN_REQUEST, ({ roomId, username }) => {
-		console.log('🔗 JOIN_REQUEST:', { socketId: socket.id, roomId, username })
-		// Check is username exist in the room
-		const isUsernameExist = getUsersInRoom(roomId).filter(
-			(u) => u.username === username
-		)
-		if (isUsernameExist.length > 0) {
+	socket.on(SocketEvent.JOIN_REQUEST, ({ roomId, username, sessionId }) => {
+		const normalizedRoomId = typeof roomId === "string" ? roomId.trim() : ""
+		const normalizedUsername = typeof username === "string" ? username.trim() : ""
+		const normalizedSessionId =
+			typeof sessionId === "string" ? sessionId.trim() : ""
+		console.log("JOIN_REQUEST:", {
+			socketId: socket.id,
+			roomId: normalizedRoomId,
+			username: normalizedUsername,
+		})
+
+		if (!normalizedRoomId || !normalizedUsername) {
 			io.to(socket.id).emit(SocketEvent.USERNAME_EXISTS)
 			return
 		}
 
+		const existingUser = getUsersInRoom(normalizedRoomId).find(
+			(u) => u.username === normalizedUsername
+		)
+
+		if (existingUser) {
+			if (existingUser.socketId !== socket.id) {
+				const existingSocket = io.sockets.sockets.get(existingUser.socketId)
+				const existingSessionId =
+					typeof existingSocket?.data?.joinSessionId === "string"
+						? existingSocket.data.joinSessionId
+						: ""
+				const canHandoff =
+					normalizedSessionId.length > 0 &&
+					existingSessionId.length > 0 &&
+					existingSessionId === normalizedSessionId
+
+				if (!canHandoff) {
+					io.to(socket.id).emit(SocketEvent.USERNAME_EXISTS)
+					return
+				}
+
+				// Refresh reconnect handoff: move identity from old socket to the new socket.
+				userSocketMap = userSocketMap.filter(
+					(u) => u.socketId !== existingUser.socketId
+				)
+				if (existingSocket) {
+					existingSocket.leave(normalizedRoomId)
+					existingSocket.disconnect(true)
+				}
+			}
+		}
+
+		// Ensure one user record per active socket.
+		userSocketMap = userSocketMap.filter((u) => u.socketId !== socket.id)
+		socket.data.joinSessionId = normalizedSessionId
+
 		const user = {
-			username,
-			roomId,
+			username: normalizedUsername,
+			roomId: normalizedRoomId,
 			status: USER_CONNECTION_STATUS.ONLINE,
 			cursorPosition: 0,
 			typing: false,
@@ -320,31 +361,38 @@ io.on("connection", (socket) => {
 			currentFile: null,
 		}
 		userSocketMap.push(user)
-		socket.join(roomId)
-		const roomWorkspacePath = getRoomWorkspacePath(roomId)
+		socket.join(normalizedRoomId)
+		const roomWorkspacePath = getRoomWorkspacePath(normalizedRoomId)
 		resetPtyForSocket(socket, roomWorkspacePath)
-		socket.broadcast.to(roomId).emit(SocketEvent.USER_JOINED, { user })
-		const users = getUsersInRoom(roomId)
-		console.log('✅ JOIN_ACCEPTED:', { socketId: socket.id, roomId, username, totalUsersInRoom: users.length })
+		socket.broadcast.to(normalizedRoomId).emit(SocketEvent.USER_JOINED, { user })
+		const users = getUsersInRoom(normalizedRoomId)
+		console.log("JOIN_ACCEPTED:", {
+			socketId: socket.id,
+			roomId: normalizedRoomId,
+			username: normalizedUsername,
+			totalUsersInRoom: users.length,
+		})
 		io.to(socket.id).emit(SocketEvent.JOIN_ACCEPTED, { user, users })
 	})
 
 	socket.on("disconnecting", () => {
-		const user = getUserBySocketId(socket.id)
-		if (!user) return
-		const roomId = user.roomId
-		socket.broadcast
-			.to(roomId)
-			.emit(SocketEvent.USER_DISCONNECTED, { user })
-		userSocketMap = userSocketMap.filter((u) => u.socketId !== socket.id)
-		socket.leave(roomId)
-		if (getUsersInRoom(roomId).length === 0) {
-			const timer = roomSyncTimers.get(roomId)
-			if (timer) {
-				clearTimeout(timer)
-				roomSyncTimers.delete(roomId)
+		const user = userSocketMap.find((u) => u.socketId === socket.id) || null
+		if (user) {
+			const roomId = user.roomId
+			socket.broadcast
+				.to(roomId)
+				.emit(SocketEvent.USER_DISCONNECTED, { user })
+			userSocketMap = userSocketMap.filter((u) => u.socketId !== socket.id)
+			socket.leave(roomId)
+			if (getUsersInRoom(roomId).length === 0) {
+				const timer = roomSyncTimers.get(roomId)
+				if (timer) {
+					clearTimeout(timer)
+					roomSyncTimers.delete(roomId)
+				}
 			}
 		}
+
 		const pty = ptyProcess.get(socket.id)
 		if (pty) {
 			pty.kill()

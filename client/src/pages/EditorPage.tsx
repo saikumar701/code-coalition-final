@@ -17,60 +17,133 @@ import { useSocket } from "@/context/SocketContext"
 import { SocketEvent } from "@/types/socket"
 import { USER_STATUS } from "@/types/user"
 import { useParams } from "react-router-dom"
+import angryCatGif from "@/assets/u_mey4kjj5ww-angry-2498_512.gif"
+import peekingCatGif from "@/assets/misskalem-cat-17977_512.gif"
+import { useRunCode } from "@/context/RunCodeContext"
+import { getClientSessionId } from "@/utils/session"
+
+type TerminalOutputPayload = {
+    data?: string
+    lines?: string[]
+}
+
+const TERMINAL_ERROR_PATTERNS = [
+    /\bsyntaxerror\b/i,
+    /\bparsererror\b/i,
+    /\btraceback\b/i,
+    /\bexception\b/i,
+    /error/i,
+    /\bfailed\b/i,
+    /\bnpm err!/i,
+    /is not recognized as an internal or external command/i,
+    /command not found/i,
+    /permission denied/i,
+    /no such file or directory/i,
+    /at line:\s*\d+\s*char:\s*\d+/i,
+    /cannot find/i,
+]
+
+const stripAnsi = (value: string) =>
+    value.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
 
 const EditorPage = () => {
     const [activeSidebarItem, setActiveSidebarItem] = useState("files");
     const [activeEditorTab, setActiveEditorTab] = useState<"code" | "draw">("code");
     const [editorKey, setEditorKey] = useState(0);
+    const [hasTerminalError, setHasTerminalError] = useState(false);
     const { roomId: routeRoomId = "" } = useParams();
     const { socket } = useSocket();
+    const { hasRunError, isRunning } = useRunCode();
     const { currentUser, setCurrentUser, status, setStatus } = useAppContext();
     const generatedGuestRef = useRef(`guest-${Math.random().toString(36).slice(2, 8)}`);
+    const terminalOutputBufferRef = useRef("");
 
     // Force editor to remount when switching tabs or files
     useEffect(() => {
         setEditorKey(prev => prev + 1);
     }, [activeEditorTab]);
 
+    useEffect(() => {
+        const handleTerminalOutput = (payload: TerminalOutputPayload) => {
+            const combinedOutput =
+                typeof payload?.data === "string"
+                    ? payload.data
+                    : Array.isArray(payload?.lines)
+                      ? payload.lines.join("\n")
+                      : ""
+
+            if (!combinedOutput.trim()) {
+                return
+            }
+
+            const normalizedOutput = stripAnsi(combinedOutput)
+            terminalOutputBufferRef.current = (
+                terminalOutputBufferRef.current + normalizedOutput
+            ).slice(-5000)
+
+            const hasError = TERMINAL_ERROR_PATTERNS.some((pattern) =>
+                pattern.test(terminalOutputBufferRef.current),
+            )
+
+            if (hasError) {
+                setHasTerminalError(true)
+            }
+        }
+
+        const resetTerminalError = () => {
+            setHasTerminalError(false)
+            terminalOutputBufferRef.current = ""
+        }
+
+        socket.on(SocketEvent.TERMINAL_OUTPUT, handleTerminalOutput)
+        window.addEventListener("terminal:command-submit", resetTerminalError)
+        window.addEventListener("terminal:cleared", resetTerminalError)
+
+        return () => {
+            socket.off(SocketEvent.TERMINAL_OUTPUT, handleTerminalOutput)
+            window.removeEventListener("terminal:command-submit", resetTerminalError)
+            window.removeEventListener("terminal:cleared", resetTerminalError)
+        }
+    }, [socket]);
+
     // Ensure direct /editor/:roomId visits still join the room so terminal/workspace sync works.
     useEffect(() => {
         if (!routeRoomId) return;
 
         const username = currentUser.username.trim() || generatedGuestRef.current;
-        const joinPayload = { ...currentUser, roomId: routeRoomId, username };
+        const nextUser = { ...currentUser, roomId: routeRoomId, username };
+        const joinPayload = {
+            roomId: routeRoomId,
+            username,
+            sessionId: getClientSessionId(),
+        };
         const isJoinedInThisRoom =
             status === USER_STATUS.JOINED && currentUser.roomId === routeRoomId;
+        const isAttemptingJoinInThisRoom =
+            status === USER_STATUS.ATTEMPTING_JOIN &&
+            currentUser.roomId === routeRoomId &&
+            currentUser.username === username;
 
         if (
             currentUser.roomId !== routeRoomId ||
             currentUser.username !== username
         ) {
-            setCurrentUser(joinPayload);
+            setCurrentUser(nextUser);
         }
 
-        if (isJoinedInThisRoom || status === USER_STATUS.ATTEMPTING_JOIN) {
+        if (isJoinedInThisRoom || isAttemptingJoinInThisRoom) {
             return;
         }
 
         setStatus(USER_STATUS.ATTEMPTING_JOIN);
-
-        const sendJoin = () => {
-            socket.emit(SocketEvent.JOIN_REQUEST, joinPayload);
-        };
-
-        if (socket.connected) {
-            sendJoin();
-            return;
+        if (!socket.connected) {
+            socket.connect();
         }
-
-        socket.connect();
-        socket.once("connect", sendJoin);
-
-        return () => {
-            socket.off("connect", sendJoin);
-        };
+        // Buffered emit handles both connected and connecting states.
+        socket.emit(SocketEvent.JOIN_REQUEST, joinPayload);
     }, [
-        currentUser,
+        currentUser.roomId,
+        currentUser.username,
         routeRoomId,
         setCurrentUser,
         setStatus,
@@ -83,12 +156,18 @@ const EditorPage = () => {
         if (!routeRoomId) return;
 
         const handleReconnect = () => {
-            if (status !== USER_STATUS.JOINED) return;
+            if (
+                status !== USER_STATUS.JOINED &&
+                status !== USER_STATUS.ATTEMPTING_JOIN
+            ) {
+                return;
+            }
+
             const username = currentUser.username.trim() || generatedGuestRef.current;
             socket.emit(SocketEvent.JOIN_REQUEST, {
-                ...currentUser,
                 roomId: routeRoomId,
                 username,
+                sessionId: getClientSessionId(),
             });
         };
 
@@ -96,7 +175,7 @@ const EditorPage = () => {
         return () => {
             socket.off("connect", handleReconnect);
         };
-    }, [currentUser, routeRoomId, socket, status]);
+    }, [currentUser.roomId, currentUser.username, routeRoomId, socket, status]);
 
     const renderActiveSidebarView = () => {
         switch (activeSidebarItem) {
@@ -117,8 +196,10 @@ const EditorPage = () => {
         }
     }
 
+    const hasExecutionError = (hasRunError || hasTerminalError) && !isRunning
+
     return (
-        <div className="h-screen bg-gray-900 text-white flex flex-col overflow-hidden">
+        <div className="relative flex h-screen flex-col overflow-hidden bg-gray-900 text-white">
             <TopToolbar />
             <div className="flex flex-grow min-h-0">
                 <LeftSidebar
@@ -141,7 +222,7 @@ const EditorPage = () => {
                         <ResizablePanelGroup direction="vertical">
                             {/* Editor Panel */}
                             <ResizablePanel defaultSize={70} minSize={30}>
-                                <div className="h-full flex flex-col bg-gray-900">
+                                <div className="relative h-full flex flex-col bg-gray-900">
                                     {/* Tab Bar */}
                                     <div className="flex items-center gap-1 bg-gray-800 border-b border-gray-700 px-2 py-1.5 flex-shrink-0">
                                         <button
@@ -187,6 +268,24 @@ const EditorPage = () => {
                                             </div>
                                         )}
                                     </div>
+
+                                    {!hasExecutionError && (
+                                        <div className="editor-peek-cat-wrap" aria-hidden="true">
+                                            <img
+                                                src={peekingCatGif}
+                                                alt=""
+                                                className="editor-peek-cat"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {hasExecutionError && (
+                                        <img
+                                            src={angryCatGif}
+                                            alt="Code error indicator"
+                                            className="editor-error-cat"
+                                        />
+                                    )}
                                 </div>
                             </ResizablePanel>
                             

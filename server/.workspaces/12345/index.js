@@ -1,5 +1,8 @@
 function sayHi() {
-  console.log("👋 Hello wrld");
+  console.log("👋 Hello world");
 }
 
 sayHi()
+
+
+
