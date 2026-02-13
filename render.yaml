@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: code-coalition-backend
+    runtime: node
+    rootDir: server
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    envVars:
+      - key: APIFREELLM_API_KEY
+        sync: false
+      - key: FILE_SHARE_MAX_SIZE_MB
+        value: "20"
+
+  - type: web
+    name: code-coalition-frontend
+    runtime: static
+    rootDir: client
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_BACKEND_URL
+        fromService:
+          type: web
+          name: code-coalition-backend
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: VITE_FILE_SHARE_MAX_MB
+        fromService:
+          type: web
+          name: code-coalition-backend
+          envVarKey: FILE_SHARE_MAX_SIZE_MB
