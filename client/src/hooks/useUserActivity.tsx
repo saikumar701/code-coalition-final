@@ -9,117 +9,77 @@ function useUserActivity() {
     const { socket } = useSocket()
 
     const handleUserVisibilityChange = useCallback(() => {
-        if (document.visibilityState === "visible")
+        if (document.visibilityState === "visible") {
             socket.emit(SocketEvent.USER_ONLINE, { socketId: socket.id })
-        else if (document.visibilityState === "hidden") {
+        } else if (document.visibilityState === "hidden") {
             socket.emit(SocketEvent.USER_OFFLINE, { socketId: socket.id })
         }
     }, [socket])
 
     const handleUserOnline = useCallback(
         ({ socketId }: { socketId: SocketId }) => {
-            setUsers((users) => {
-                return users.map((user) => {
-                    if (user.socketId === socketId) {
-                        return {
-                            ...user,
-                            status: USER_CONNECTION_STATUS.ONLINE,
-                        }
-                    }
-                    return user
-                })
-            })
+            setUsers((users) =>
+                users.map((user) =>
+                    user.socketId === socketId
+                        ? { ...user, status: USER_CONNECTION_STATUS.ONLINE }
+                        : user,
+                ),
+            )
         },
         [setUsers],
     )
 
     const handleUserOffline = useCallback(
         ({ socketId }: { socketId: SocketId }) => {
-            setUsers((users) => {
-                return users.map((user) => {
-                    if (user.socketId === socketId) {
-                        return {
-                            ...user,
-                            status: USER_CONNECTION_STATUS.OFFLINE,
-                        }
-                    }
-                    return user
-                })
-            })
+            setUsers((users) =>
+                users.map((user) =>
+                    user.socketId === socketId
+                        ? { ...user, status: USER_CONNECTION_STATUS.OFFLINE }
+                        : user,
+                ),
+            )
         },
         [setUsers],
     )
 
-    const handleUserTyping = useCallback(
+    const handleUserUpdated = useCallback(
         ({ user }: { user: RemoteUser }) => {
-            console.log('👤 handleUserTyping called with user:', {
-                username: user.username,
-                currentFile: user.currentFile,
-                cursorPosition: user.cursorPosition,
-                typing: user.typing,
-            })
-            setUsers((users) => {
-                return users.map((u) => {
-                    if (u.socketId === user.socketId) {
-                        console.log('✅ Updating user in context:', {
-                            username: user.username,
-                            oldCurrentFile: u.currentFile,
-                            newCurrentFile: user.currentFile,
-                        })
-                        return user
-                    }
-                    return u
-                })
-            })
+            setUsers((users) =>
+                users.map((existingUser) =>
+                    existingUser.socketId === user.socketId
+                        ? { ...existingUser, ...user }
+                        : existingUser,
+                ),
+            )
         },
         [setUsers],
     )
 
     useEffect(() => {
-        document.addEventListener(
-            "visibilitychange",
-            handleUserVisibilityChange,
-        )
+        document.addEventListener("visibilitychange", handleUserVisibilityChange)
 
         socket.on(SocketEvent.USER_ONLINE, handleUserOnline)
         socket.on(SocketEvent.USER_OFFLINE, handleUserOffline)
-        socket.on(SocketEvent.TYPING_START, (data) => {
-            console.log('📝 TYPING_START received:', data)
-            handleUserTyping(data)
-        })
-        socket.on(SocketEvent.TYPING_PAUSE, (data) => {
-            console.log('⏸️ TYPING_PAUSE received:', data)
-            handleUserTyping(data)
-        })
-        socket.on(SocketEvent.CURSOR_MOVE, (data) => {
-            console.log('🖱️ CURSOR_MOVE received:', data)
-            handleUserTyping(data)
-        })
-        socket.on(SocketEvent.USER_JOINED, (data) => {
-            console.log('👥 USER_JOINED received:', data)
-            handleUserTyping(data)
-        })
+        socket.on(SocketEvent.TYPING_START, handleUserUpdated)
+        socket.on(SocketEvent.TYPING_PAUSE, handleUserUpdated)
+        socket.on(SocketEvent.CURSOR_MOVE, handleUserUpdated)
+        socket.on(SocketEvent.USER_UPDATED, handleUserUpdated)
 
         return () => {
-            document.removeEventListener(
-                "visibilitychange",
-                handleUserVisibilityChange,
-            )
-
-            socket.off(SocketEvent.USER_ONLINE)
-            socket.off(SocketEvent.USER_OFFLINE)
-            socket.off(SocketEvent.TYPING_START)
-            socket.off(SocketEvent.TYPING_PAUSE)
-            socket.off(SocketEvent.CURSOR_MOVE)
-            socket.off(SocketEvent.USER_JOINED)
+            document.removeEventListener("visibilitychange", handleUserVisibilityChange)
+            socket.off(SocketEvent.USER_ONLINE, handleUserOnline)
+            socket.off(SocketEvent.USER_OFFLINE, handleUserOffline)
+            socket.off(SocketEvent.TYPING_START, handleUserUpdated)
+            socket.off(SocketEvent.TYPING_PAUSE, handleUserUpdated)
+            socket.off(SocketEvent.CURSOR_MOVE, handleUserUpdated)
+            socket.off(SocketEvent.USER_UPDATED, handleUserUpdated)
         }
     }, [
         socket,
-        setUsers,
         handleUserVisibilityChange,
         handleUserOnline,
         handleUserOffline,
-        handleUserTyping,
+        handleUserUpdated,
     ])
 }
 

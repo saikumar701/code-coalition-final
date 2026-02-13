@@ -1,9 +1,14 @@
 import { ICopilotContext } from "@/types/copilot"
-import { createContext, ReactNode, useContext, useState } from "react"
-import toast from "react-hot-toast"
 import axios from "axios"
+import { ReactNode, createContext, useContext, useState } from "react"
+import toast from "react-hot-toast"
 
 const CopilotContext = createContext<ICopilotContext | null>(null)
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL
+const COPILOT_ENDPOINT = BACKEND_URL
+    ? `${BACKEND_URL}/api/copilot/generate`
+    : "/api/copilot/generate"
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const useCopilot = () => {
@@ -22,51 +27,56 @@ const CopilotContextProvider = ({ children }: { children: ReactNode }) => {
     const [isRunning, setIsRunning] = useState<boolean>(false)
 
     const generateCode = async () => {
+        const trimmedInput = input.trim()
+        if (!trimmedInput) {
+            toast.error("Please write a prompt")
+            return
+        }
+
+        const toastId = toast.loading("Generating code...")
+        setIsRunning(true)
+
         try {
-            if (input.length === 0) {
-                toast.error("Please write a prompt")
-                return
+            const response = await axios.post(
+                COPILOT_ENDPOINT,
+                {
+                    prompt: trimmedInput,
+                    model: "apifreellm",
+                    systemPrompt:
+                        "You are Code Coalition Copilot. You can answer general questions, explain errors, and generate code. If the user asks for code, provide runnable code in fenced markdown blocks and keep explanations concise. If the user asks general questions, respond normally in clear markdown.",
+                },
+                {
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    timeout: 60000,
+                },
+            )
+
+            const generatedText =
+                response.data?.text ||
+                response.data?.output ||
+                response.data?.candidates?.[0]?.content?.parts
+                    ?.map((part: { text?: string }) => part.text || "")
+                    .join("\n")
+
+            if (!generatedText || typeof generatedText !== "string") {
+                throw new Error("Empty response from Copilot API")
             }
 
-            toast.loading("Generating code...")
-            setIsRunning(true)
-            const response = await axios.post("/api/copilot/generate", {
-                messages: [
-                    {
-                        role: "system",
-                        content:
-                            "You are a code generator copilot for project named CodeAlong. Generate code based on the given prompt without any explanation. Return only the code, formatted in Markdown using the appropriate language syntax (e.g., js for JavaScript, py for Python). Do not include any additional text or explanations. If you don't know the answer, respond with 'I don't know'.",
-                    },
-                    {
-                        role: "user",
-                        content: input,
-                    },
-                ],
-                model: "mistral",
-                private: true,
-            })
-            
-            if (response.data) {
-                toast.success("Code generated successfully")
-                // Handle the Pollinations API response structure
-                let code = ""
-                if (response.data?.choices?.[0]?.message?.content) {
-                    code = response.data.choices[0].message.content
-                } else if (typeof response.data === "string") {
-                    code = response.data
-                } else {
-                    code = JSON.stringify(response.data)
-                }
-                
-                if (code) setOutput(code)
-            }
-            setIsRunning(false)
-            toast.dismiss()
+            setOutput(generatedText.trim())
+            toast.success("Code generated successfully", { id: toastId })
         } catch (error) {
-            console.error("Copilot error:", error)
+            let message = "Failed to generate the code"
+            if (axios.isAxiosError(error)) {
+                message =
+                    (error.response?.data?.error as string) ||
+                    error.message ||
+                    message
+            }
+            toast.error(message, { id: toastId })
+        } finally {
             setIsRunning(false)
-            toast.dismiss()
-            toast.error("Failed to generate the code")
         }
     }
 

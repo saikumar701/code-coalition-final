@@ -7,7 +7,7 @@ const initialCode = `function sayHi() {
 
 sayHi()`
 
-export const initialFileStructure: FileSystemItem = {
+export const createInitialFileStructure = (): FileSystemItem => ({
     name: "root",
     id: uuidv4(),
     type: "directory",
@@ -19,7 +19,9 @@ export const initialFileStructure: FileSystemItem = {
             content: initialCode,
         },
     ],
-}
+})
+
+export const initialFileStructure: FileSystemItem = createInitialFileStructure()
 
 export const findParentDirectory = (
     directory: FileSystemItem,
@@ -71,31 +73,26 @@ export const getFileById = (
 }
 
 export const sortFileSystemItem = (item: FileSystemItem): FileSystemItem => {
-    // Recursively sort children if it's a directory
-    if (item.type === "directory" && item.children) {
-        // Separate directories and files
-        let directories = item.children.filter(
-            (child) => child.type === "directory",
-        )
-        const files = item.children.filter((child) => child.type === "file")
+    if (item.type !== "directory" || !item.children) {
+        return item
+    }
 
-        // Sort directories by name (A-Z)
-        directories.sort((a, b) => a.name.localeCompare(b.name))
+    let directories = item.children
+        .filter((child) => child.type === "directory")
+        .map((dir) => sortFileSystemItem(dir))
+    const files = item.children
+        .filter((child) => child.type === "file")
+        .sort((a, b) => a.name.localeCompare(b.name))
 
-        // Recursively sort nested directories
-        directories = directories.map((dir) => sortFileSystemItem(dir))
+    directories = directories.sort((a, b) => a.name.localeCompare(b.name))
 
-        // Sort files by name (A-Z)
-        files.sort((a, b) => a.name.localeCompare(b.name))
-
-        // Combine sorted directories and files
-        item.children = [
+    return {
+        ...item,
+        children: [
             ...directories.filter((dir) => dir.name.startsWith(".")),
             ...directories.filter((dir) => !dir.name.startsWith(".")),
             ...files.filter((file) => file.name.startsWith(".")),
             ...files.filter((file) => !file.name.startsWith(".")),
-        ]
+        ],
     }
-
-    return item
 }

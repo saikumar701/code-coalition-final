@@ -15,9 +15,21 @@ function CopilotView() {
     const { generateCode, output, isRunning, setInput } = useCopilot()
     const { activeFile, updateFileContent, setActiveFile } = useFileSystem()
 
+    const extractCodeForEditor = (text: string) => {
+        const matches = [...text.matchAll(/```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g)]
+        if (matches.length === 0) {
+            return text.trim()
+        }
+
+        return matches
+            .map((match) => match[1].trim())
+            .filter(Boolean)
+            .join("\n\n")
+    }
+
     const copyOutput = async () => {
         try {
-            const content = output.replace(/```[\w]*\n?/g, "").trim()
+            const content = extractCodeForEditor(output)
             await navigator.clipboard.writeText(content)
             toast.success("Output copied to clipboard")
         } catch (error) {
@@ -31,7 +43,7 @@ function CopilotView() {
             const fileContent = activeFile.content
                 ? `${activeFile.content}\n`
                 : ""
-            const content = `${fileContent}${output.replace(/```[\w]*\n?/g, "").trim()}`
+            const content = `${fileContent}${extractCodeForEditor(output)}`
             updateFileContent(activeFile.id, content)
             // Update the content of the active file if it's the same file
             setActiveFile({ ...activeFile, content })
@@ -50,7 +62,7 @@ function CopilotView() {
                 `Are you sure you want to replace the code in the file?`,
             )
             if (!isConfirmed) return
-            const content = output.replace(/```[\w]*\n?/g, "").trim()
+            const content = extractCodeForEditor(output)
             updateFileContent(activeFile.id, content)
             // Update the content of the active file if it's the same file
             setActiveFile({ ...activeFile, content })
@@ -71,7 +83,7 @@ function CopilotView() {
             <h1 className="view-title">Copilot</h1>
             <textarea
                 className="min-h-[120px] w-full rounded-md border-none bg-darkHover p-2 text-white outline-none"
-                placeholder="What code do you want to generate?"
+                placeholder="Ask anything: code, errors, concepts, or project questions..."
                 onChange={(e) => setInput(e.target.value)}
             />
             <button
@@ -79,7 +91,7 @@ function CopilotView() {
                 onClick={generateCode}
                 disabled={isRunning}
             >
-                {isRunning ? "Generating..." : "Generate Code"}
+                {isRunning ? "Thinking..." : "Ask Copilot"}
             </button>
             {output && (
                 <div className="flex justify-end gap-4 pt-2">

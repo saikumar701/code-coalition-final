@@ -6,9 +6,23 @@ import { SocketEvent, SocketId } from "./types/socket"
 import { USER_CONNECTION_STATUS, User } from "./types/user"
 import { Server } from "socket.io"
 import path from "path"
-import vm from "vm"
+import * as pty from "node-pty"
+import os from "os"
+import fs from "fs"
+import fsPromises from "fs/promises"
 
-dotenv.config()
+const loadServerEnv = () => {
+	const envPaths = [
+		path.resolve(process.cwd(), "server", ".env"),
+		path.resolve(__dirname, "..", ".env"),
+	]
+
+	envPaths.forEach((envPath) => {
+		dotenv.config({ path: envPath, override: true })
+	})
+}
+
+loadServerEnv()
 
 const app = express()
 
@@ -28,7 +42,178 @@ const io = new Server(server, {
 })
 
 let userSocketMap: User[] = []
-const terminalContexts = new Map<SocketId, vm.Context>()
+const ptyProcess = new Map<SocketId, pty.IPty>()
+const shell = os.platform() === "win32" ? "powershell.exe" : "bash"
+const workspaceRoot = path.resolve(process.cwd(), ".workspaces")
+const roomFileTrees = new Map<string, WorkspaceFileSystemItem>()
+const roomTrackedPaths = new Map<string, Set<string>>()
+const roomSyncTimers = new Map<string, NodeJS.Timeout>()
+
+interface WorkspaceFileSystemItem {
+	id: string
+	name: string
+	type: "file" | "directory"
+	children?: WorkspaceFileSystemItem[]
+	content?: string
+}
+
+interface WorkspaceEntry {
+	relativePath: string
+	type: "file" | "directory"
+	content?: string
+}
+
+if (!fs.existsSync(workspaceRoot)) {
+	fs.mkdirSync(workspaceRoot, { recursive: true })
+}
+
+function sanitizeRoomId(roomId: string): string {
+	return roomId.replace(/[^a-zA-Z0-9_-]/g, "_")
+}
+
+function getRoomWorkspacePath(roomId: string): string {
+	const directoryPath = path.join(workspaceRoot, sanitizeRoomId(roomId))
+	if (!fs.existsSync(directoryPath)) {
+		fs.mkdirSync(directoryPath, { recursive: true })
+	}
+	return directoryPath
+}
+
+function createPtyForSocket(socketId: SocketId, socket: any, cwd: string): pty.IPty {
+	const instance = pty.spawn(shell, [], {
+		name: "xterm-color",
+		cols: 80,
+		rows: 30,
+		cwd,
+		env: process.env,
+	})
+
+	instance.onData((data: string) => {
+		socket.emit(SocketEvent.TERMINAL_OUTPUT, {
+			data,
+		})
+	})
+
+	instance.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
+		console.log(
+			`PTY process for ${socketId} exited with code ${exitCode}, signal ${signal}`
+		)
+		ptyProcess.delete(socketId)
+		socket.emit(SocketEvent.TERMINAL_OUTPUT, {
+			data: "\r\n[Terminal session ended. Press Enter to restart]\r\n",
+		})
+	})
+
+	ptyProcess.set(socketId, instance)
+	return instance
+}
+
+function resetPtyForSocket(socket: any, cwd: string) {
+	const existing = ptyProcess.get(socket.id)
+	if (existing) {
+		existing.kill()
+		ptyProcess.delete(socket.id)
+	}
+	createPtyForSocket(socket.id, socket, cwd)
+}
+
+function getTerminalCwdForSocket(socketId: SocketId): string {
+	const roomId = getRoomId(socketId)
+	if (roomId) {
+		return getRoomWorkspacePath(roomId)
+	}
+	return process.env.INIT_CWD || process.cwd()
+}
+
+function ensurePtyForSocket(socket: any): pty.IPty {
+	const existingPty = ptyProcess.get(socket.id)
+	if (existingPty) {
+		return existingPty
+	}
+
+	const cwd = getTerminalCwdForSocket(socket.id)
+	return createPtyForSocket(socket.id, socket, cwd)
+}
+
+function getWorkspaceEntries(children: WorkspaceFileSystemItem[], parentPath = ""): WorkspaceEntry[] {
+	const entries: WorkspaceEntry[] = []
+
+	children.forEach((child) => {
+		const childPath = parentPath ? `${parentPath}/${child.name}` : child.name
+
+		if (child.type === "directory") {
+			entries.push({
+				relativePath: childPath,
+				type: "directory",
+			})
+			entries.push(...getWorkspaceEntries(child.children || [], childPath))
+			return
+		}
+
+		entries.push({
+			relativePath: childPath,
+			type: "file",
+			content: child.content || "",
+		})
+	})
+
+	return entries
+}
+
+async function synchronizeWorkspaceToDisk(roomId: string): Promise<void> {
+	const fileTree = roomFileTrees.get(roomId)
+	if (!fileTree || fileTree.type !== "directory") return
+
+	const workspacePath = getRoomWorkspacePath(roomId)
+	const nextEntries = getWorkspaceEntries(fileTree.children || [])
+	const nextPaths = new Set(nextEntries.map((entry) => entry.relativePath))
+	const previousPaths = roomTrackedPaths.get(roomId) || new Set<string>()
+
+	const removedPaths = [...previousPaths]
+		.filter((relativePath) => !nextPaths.has(relativePath))
+		.sort(
+			(a, b) => b.split("/").length - a.split("/").length || b.localeCompare(a),
+		)
+
+	for (const relativePath of removedPaths) {
+		const absolutePath = path.join(workspacePath, ...relativePath.split("/"))
+		await fsPromises.rm(absolutePath, { recursive: true, force: true })
+	}
+
+	const directoryEntries = nextEntries
+		.filter((entry) => entry.type === "directory")
+		.sort((a, b) => a.relativePath.split("/").length - b.relativePath.split("/").length)
+
+	for (const directory of directoryEntries) {
+		const absolutePath = path.join(workspacePath, ...directory.relativePath.split("/"))
+		await fsPromises.mkdir(absolutePath, { recursive: true })
+	}
+
+	const fileEntries = nextEntries.filter((entry) => entry.type === "file")
+	for (const fileEntry of fileEntries) {
+		const absolutePath = path.join(workspacePath, ...fileEntry.relativePath.split("/"))
+		await fsPromises.mkdir(path.dirname(absolutePath), { recursive: true })
+		await fsPromises.writeFile(absolutePath, fileEntry.content || "", "utf8")
+	}
+
+	roomTrackedPaths.set(roomId, nextPaths)
+}
+
+function scheduleWorkspaceSync(roomId: string) {
+	const timer = roomSyncTimers.get(roomId)
+	if (timer) {
+		clearTimeout(timer)
+	}
+
+	const syncTimer = setTimeout(() => {
+		void synchronizeWorkspaceToDisk(roomId).catch((error) => {
+			console.error(`Failed to sync workspace for room ${roomId}:`, error)
+		})
+		roomSyncTimers.delete(roomId)
+	}, 200)
+
+	roomSyncTimers.set(roomId, syncTimer)
+}
 
 // Function to get all users in a room
 function getUsersInRoom(roomId: string): User[] {
@@ -57,43 +242,14 @@ function getUserBySocketId(socketId: SocketId): User | null {
 	return user
 }
 
-const formatValue = (value: unknown): string => {
-	if (typeof value === "string") return value
-	try {
-		return JSON.stringify(value)
-	} catch {
-		return String(value)
-	}
-}
-
-const createSandboxContext = () => {
-	return vm.createContext({
-		Math,
-		Number,
-		String,
-		Boolean,
-		BigInt,
-		Date,
-		JSON,
-		Array,
-		Object,
-		Map,
-		Set,
-		WeakMap,
-		WeakSet,
-	})
-}
-
-const ensureTerminalContext = (socketId: SocketId) => {
-	if (!terminalContexts.has(socketId)) {
-		terminalContexts.set(socketId, createSandboxContext())
-	}
-	return terminalContexts.get(socketId) as vm.Context
-}
-
 io.on("connection", (socket) => {
-	console.log('✅ NEW CONNECTION:', socket.id)
-	
+	console.log("✅ NEW CONNECTION:", socket.id)
+
+	const ptyInstance = ptyProcess.get(socket.id)
+	if (!ptyInstance) {
+		createPtyForSocket(socket.id, socket, process.env.INIT_CWD || process.cwd())
+	}
+
 	// Handle user actions
 	socket.on(SocketEvent.JOIN_REQUEST, ({ roomId, username }) => {
 		console.log('🔗 JOIN_REQUEST:', { socketId: socket.id, roomId, username })
@@ -117,6 +273,8 @@ io.on("connection", (socket) => {
 		}
 		userSocketMap.push(user)
 		socket.join(roomId)
+		const roomWorkspacePath = getRoomWorkspacePath(roomId)
+		resetPtyForSocket(socket, roomWorkspacePath)
 		socket.broadcast.to(roomId).emit(SocketEvent.USER_JOINED, { user })
 		const users = getUsersInRoom(roomId)
 		console.log('✅ JOIN_ACCEPTED:', { socketId: socket.id, roomId, username, totalUsersInRoom: users.length })
@@ -132,7 +290,18 @@ io.on("connection", (socket) => {
 			.emit(SocketEvent.USER_DISCONNECTED, { user })
 		userSocketMap = userSocketMap.filter((u) => u.socketId !== socket.id)
 		socket.leave(roomId)
-		terminalContexts.delete(socket.id)
+		if (getUsersInRoom(roomId).length === 0) {
+			const timer = roomSyncTimers.get(roomId)
+			if (timer) {
+				clearTimeout(timer)
+				roomSyncTimers.delete(roomId)
+			}
+		}
+		const pty = ptyProcess.get(socket.id)
+		if (pty) {
+			pty.kill()
+			ptyProcess.delete(socket.id)
+		}
 	})
 
 	// Handle file actions
@@ -145,6 +314,16 @@ io.on("connection", (socket) => {
 				activeFile,
 			})
 		}
+	)
+
+	socket.on(
+		SocketEvent.WORKSPACE_SYNC,
+		({ fileStructure }: { fileStructure: WorkspaceFileSystemItem }) => {
+			const roomId = getRoomId(socket.id)
+			if (!roomId) return
+			roomFileTrees.set(roomId, fileStructure)
+			scheduleWorkspaceSync(roomId)
+		},
 	)
 
 	socket.on(
@@ -247,7 +426,7 @@ io.on("connection", (socket) => {
 			username: user.username,
 			currentFile: user.currentFile,
 		})
-		socket.broadcast.to(roomId).emit(SocketEvent.USER_JOINED, { user })
+		socket.broadcast.to(roomId).emit(SocketEvent.USER_UPDATED, { user })
 	})
 
 	// Handle user status
@@ -385,47 +564,24 @@ io.on("connection", (socket) => {
 
 
 	socket.on(SocketEvent.TERMINAL_EXECUTE, ({ input }) => {
-		if (typeof input !== "string") return
-		const command = input.trim()
-		if (!command.length) return
+		const ptyInstance = ensurePtyForSocket(socket)
+		ptyInstance.write(input)
+	})
 
-		const sandbox = ensureTerminalContext(socket.id)
-		const lines: string[] = []
-		const pushLine = (line: string) => {
-			line.split(/\r?\n/).forEach((chunk) => lines.push(chunk))
-		}
-
-		const consoleProxy = {
-			log: (...args: unknown[]) =>
-				pushLine(args.map((arg) => formatValue(arg)).join(" ")),
-			error: (...args: unknown[]) =>
-				pushLine(args.map((arg) => formatValue(arg)).join(" ")),
-			warn: (...args: unknown[]) =>
-				pushLine(args.map((arg) => formatValue(arg)).join(" ")),
-		}
-
-		// Attach a minimal console implementation to the sandbox
-		;(sandbox as vm.Context & { console: Console }).console =
-			consoleProxy as unknown as Console
-
-		try {
-			const script = new vm.Script(command)
-			const result = script.runInContext(sandbox, { timeout: 1000 })
-			if (result !== undefined) {
-				pushLine(`=> ${formatValue(result)}`)
-			}
-			socket.emit(SocketEvent.TERMINAL_OUTPUT, { lines })
-		} catch (error) {
-			socket.emit(SocketEvent.TERMINAL_OUTPUT, {
-				lines: [`Error: ${(error as Error).message}`],
-				isError: true,
-			})
-		}
+	socket.on(SocketEvent.TERMINAL_RESIZE, ({ cols, rows }) => {
+		if (typeof cols !== "number" || typeof rows !== "number") return
+		if (cols < 2 || rows < 1) return
+		const ptyInstance = ensurePtyForSocket(socket)
+		ptyInstance.resize(Math.floor(cols), Math.floor(rows))
 	})
 
 	socket.on(SocketEvent.TERMINAL_RESET, () => {
-		terminalContexts.set(socket.id, createSandboxContext())
-		socket.emit(SocketEvent.TERMINAL_OUTPUT, { lines: ["Session cleared."] })
+		const roomId = getRoomId(socket.id)
+		const terminalCwd = roomId
+			? getRoomWorkspacePath(roomId)
+			: process.env.INIT_CWD || process.cwd()
+		resetPtyForSocket(socket, terminalCwd)
+		socket.emit(SocketEvent.TERMINAL_OUTPUT, { data: "Session cleared.\r\n" })
 	})
 })
 
@@ -434,38 +590,95 @@ const PORT = process.env.PORT || 3000
 // Copilot API proxy endpoint
 app.post("/api/copilot/generate", async (req: Request, res: Response) => {
 	try {
-		const { messages, model } = req.body
-		
-		if (!process.env.OPENAI_API_KEY) {
-			console.error("OpenAI API key not configured")
-			return res.status(400).json({ error: "API key not configured" })
+		loadServerEnv()
+
+		const {
+			prompt,
+			messages,
+			model,
+			systemPrompt,
+		} = req.body as {
+			prompt?: string
+			messages?: Array<{ role?: string; content?: string }>
+			model?: string
+			systemPrompt?: string
 		}
 
-		console.log("Sending request to OpenAI API with model:", model)
-		
-		const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		const userPromptFromMessages = Array.isArray(messages)
+			? messages
+					.map((m) => `${m.role || "user"}: ${m.content || ""}`.trim())
+					.filter(Boolean)
+					.join("\n")
+			: ""
+		const userPrompt = (prompt || userPromptFromMessages || "").trim()
+		if (!userPrompt) {
+			return res.status(400).json({ error: "Prompt is required" })
+		}
+
+		const apiFreeLlmKey = (
+			process.env.APIFREELLM_API_KEY ||
+			process.env.VITE_APIFREELLM_API_KEY ||
+			""
+		).trim()
+		if (!apiFreeLlmKey) {
+			console.error("API Free LLM key not configured")
+			return res.status(400).json({
+				error: "APIFREELLM_API_KEY is not configured in server/.env",
+			})
+		}
+
+		const selectedModel =
+			typeof model === "string" && model.trim().length > 0
+				? model.trim()
+				: "apifreellm"
+		const baseSystemPrompt =
+			typeof systemPrompt === "string" && systemPrompt.trim().length > 0
+				? systemPrompt.trim()
+				: "You are a coding copilot for the Code Coalition project. Return only Markdown code blocks with no explanation outside the code block."
+		const finalMessage = `${baseSystemPrompt}\n\nUser request:\n${userPrompt}`
+
+		const response = await fetch("https://apifreellm.com/api/v1/chat", {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+				Authorization: `Bearer ${apiFreeLlmKey}`,
 			},
 			body: JSON.stringify({
-				messages,
-				model: model || "gpt-3.5-turbo",
-				temperature: 0.7,
-				max_tokens: 2000,
+				message: finalMessage,
+				model: selectedModel,
 			}),
 		})
 
+		const data = await response.json()
 		if (!response.ok) {
-			const errorData = await response.json()
-			console.error("OpenAI API error:", response.status, errorData)
-			return res.status(response.status).json({ error: errorData.error?.message || "API request failed" })
+			console.error("API Free LLM error:", response.status, data)
+			return res.status(response.status).json({
+				error:
+					data?.error ||
+					data?.message ||
+					"API Free LLM request failed",
+			})
 		}
 
-		const data = await response.json()
-		console.log("OpenAI API response received")
-		res.json(data)
+		const text =
+			typeof data?.response === "string"
+				? data.response.trim()
+				: typeof data?.text === "string"
+					? data.text.trim()
+					: ""
+		if (!text) {
+			console.error("API Free LLM returned empty response:", data)
+			return res
+				.status(502)
+				.json({ error: "API Free LLM returned an empty response" })
+		}
+
+		return res.json({
+			text,
+			model: selectedModel,
+			tier: data?.tier,
+			features: data?.features,
+		})
 	} catch (error) {
 		console.error("Copilot API error:", error)
 		res.status(500).json({ error: `Failed to generate code: ${(error as Error).message}` })

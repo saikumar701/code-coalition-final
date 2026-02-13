@@ -6,6 +6,7 @@ enum SocketEvent {
 	JOIN_REQUEST = "join-request",
 	JOIN_ACCEPTED = "join-accepted",
 	USER_JOINED = "user-joined",
+	USER_UPDATED = "user-updated",
 	USER_DISCONNECTED = "user-disconnected",
 	SYNC_FILE_STRUCTURE = "sync-file-structure",
 	DIRECTORY_CREATED = "directory-created",
@@ -30,7 +31,9 @@ enum SocketEvent {
 	DRAWING_UPDATE = "drawing-update",
 	TERMINAL_EXECUTE = "terminal-execute",
 	TERMINAL_OUTPUT = "terminal-output",
+	TERMINAL_RESIZE = "terminal-resize",
 	TERMINAL_RESET = "terminal-reset",
+	WORKSPACE_SYNC = "workspace-sync",
 }
 
 interface SocketContext {

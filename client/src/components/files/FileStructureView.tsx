@@ -1,432 +1,325 @@
-import { useAppContext } from "@/context/AppContext";
-import { useFileSystem } from "@/context/FileContext";
-import { useViews } from "@/context/ViewContext";
-import { useContextMenu } from "@/hooks/useContextMenu";
-import useWindowDimensions from "@/hooks/useWindowDimensions";
-import { ACTIVITY_STATE } from "@/types/app";
-import { FileSystemItem, Id } from "@/types/file";
-import { sortFileSystemItem } from "@/utils/file";
-import { getIconClassName } from "@/utils/getIconClassName";
-import { Icon } from "@iconify/react";
-import cn from "classnames";
+import { useEffect, useRef, useState } from "react"
+import { useFileSystem } from "@/context/FileContext"
+import useResponsive from "@/hooks/useResponsive"
+import { FileSystemItem, Id } from "@/types/file"
+import { getFileById, sortFileSystemItem } from "@/utils/file"
+import cn from "classnames"
 import {
-    ChevronDown,
-    ChevronRight,
-    Folder as FolderIcon,
-    FolderOpen,
-    Trash2,
-    Pencil,
+    FileArchive,
     FilePlus,
+    FileUp,
+    Folder as FolderIcon,
     FolderPlus,
     FolderUp,
-} from "lucide-react";
-import { MouseEvent, useEffect, useRef, useState } from "react";
-import RenameView from "./RenameView";
-import useResponsive from "@/hooks/useResponsive";
+    Upload,
+} from "lucide-react"
+import DropZone from "../DropZone"
+import TreeNode from "./TreeNode"
 
 function FileStructureView() {
-    const { fileStructure, createFile, createDirectory, collapseDirectories } =
-        useFileSystem();
-    const explorerRef = useRef<HTMLDivElement | null>(null);
-    const [selectedDirId, setSelectedDirId] = useState<Id | null>(null);
-    const { minHeightReached } = useResponsive();
+    const {
+        fileStructure,
+        createFile,
+        createDirectory,
+        collapseDirectories,
+        importFile,
+        importZip,
+    } = useFileSystem()
 
-    const handleClickOutside = (e: MouseEvent) => {
-        if (
-            explorerRef.current &&
-            !explorerRef.current.contains(e.target as Node)
-        ) {
-            setSelectedDirId(fileStructure.id);
-        }
-    };
+    const explorerRef = useRef<HTMLDivElement | null>(null)
+    const fileInputRef = useRef<HTMLInputElement | null>(null)
+    const folderInputRef = useRef<HTMLInputElement | null>(null)
+    const [selectedDirId, setSelectedDirId] = useState<Id>(fileStructure.id)
+    const { minHeightReached } = useResponsive()
+
+    useEffect(() => {
+        setSelectedDirId(fileStructure.id)
+    }, [fileStructure.id])
+
+    const resolveSelectedDirectoryId = () => selectedDirId || fileStructure.id
+
+    const readFileContent = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = (event) => {
+                resolve((event.target?.result as string) || "")
+            }
+            reader.onerror = reject
+            reader.readAsText(file)
+        })
+    }
+
+    const openPathInTerminal = (relativePath: string) => {
+        window.dispatchEvent(
+            new CustomEvent("terminal:cd", {
+                detail: { path: relativePath || "." },
+            }),
+        )
+    }
+
+    const getOrCreateDirectoryId = (
+        directoryPathCache: Map<string, string>,
+        importRootId: Id,
+        pathFromImportRoot: string,
+        directoryName: string,
+        parentId: Id,
+    ) => {
+        const cacheKey = `${importRootId}:${pathFromImportRoot}`
+        const cachedDirectoryId = directoryPathCache.get(cacheKey)
+        if (cachedDirectoryId) return cachedDirectoryId
+
+        const parentNode = getFileById(fileStructure, parentId)
+        const existingDirectory =
+            parentNode?.type === "directory"
+                ? parentNode.children?.find(
+                      (item) => item.type === "directory" && item.name === directoryName,
+                  )
+                : null
+
+        const directoryId = existingDirectory?.id || createDirectory(parentId, directoryName)
+        directoryPathCache.set(cacheKey, directoryId)
+        return directoryId
+    }
 
     const handleCreateFile = () => {
-        const fileName = prompt("Enter file name");
-        if (fileName) {
-            const parentDirId: Id = selectedDirId || fileStructure.id;
-            createFile(parentDirId, fileName);
-        }
-    };
+        const fileName = prompt("Enter file name")
+        if (!fileName) return
+        createFile(resolveSelectedDirectoryId(), fileName)
+    }
 
     const handleCreateDirectory = () => {
-        const dirName = prompt("Enter directory name");
-        if (dirName) {
-            const parentDirId: Id = selectedDirId || fileStructure.id;
-            createDirectory(parentDirId, dirName);
-        }
-    };
+        const dirName = prompt("Enter directory name")
+        if (!dirName) return
+        createDirectory(resolveSelectedDirectoryId(), dirName)
+    }
 
-    const sortedFileStructure = sortFileSystemItem(fileStructure);
+    const handleImportFile = () => {
+        fileInputRef.current?.click()
+    }
+
+    const handleImportFolder = () => {
+        folderInputRef.current?.click()
+    }
+
+    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = event.target.files
+        if (!files || files.length === 0) return
+
+        const targetDirectoryId = resolveSelectedDirectoryId()
+        for (let index = 0; index < files.length; index += 1) {
+            const file = files[index]
+            const content = await readFileContent(file)
+            importFile(targetDirectoryId, file.name, content)
+        }
+
+        event.target.value = ""
+    }
+
+    const handleFolderChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = event.target.files
+        if (!files || files.length === 0) return
+
+        const targetDirectoryId = resolveSelectedDirectoryId()
+        const directoryPathCache = new Map<string, string>()
+
+        for (let index = 0; index < files.length; index += 1) {
+            const file = files[index]
+            const content = await readFileContent(file)
+            const relativePath = (file.webkitRelativePath || file.name)
+                .split("/")
+                .filter(Boolean)
+            if (relativePath.length === 0) continue
+
+            const directoryParts = relativePath.slice(0, -1)
+            const fileName = relativePath[relativePath.length - 1]
+
+            let currentParentId = targetDirectoryId
+            let traversedPath = ""
+
+            for (const dirPart of directoryParts) {
+                traversedPath = traversedPath ? `${traversedPath}/${dirPart}` : dirPart
+                currentParentId = getOrCreateDirectoryId(
+                    directoryPathCache,
+                    targetDirectoryId,
+                    traversedPath,
+                    dirPart,
+                    currentParentId,
+                )
+            }
+
+            importFile(currentParentId, fileName, content)
+        }
+
+        event.target.value = ""
+    }
+
+    const readDirectoryEntries = async (reader: any): Promise<any[]> => {
+        const entries: any[] = []
+        let batch: any[] = await new Promise((resolve) => reader.readEntries(resolve))
+
+        while (batch.length > 0) {
+            entries.push(...batch)
+            batch = await new Promise((resolve) => reader.readEntries(resolve))
+        }
+
+        return entries
+    }
+
+    const processEntry = async (entry: any, parentId: string): Promise<void> => {
+        if (entry.isFile) {
+            const file = await new Promise<File>((resolve) => entry.file(resolve))
+            const text = await file.text()
+            importFile(parentId, file.name, text)
+            return
+        }
+
+        if (entry.isDirectory) {
+            const newDirectoryId = createDirectory(parentId, entry.name)
+            const reader = entry.createReader()
+            const entries = await readDirectoryEntries(reader)
+            for (const child of entries) {
+                await processEntry(child, newDirectoryId)
+            }
+        }
+    }
+
+    const handleDrop = async (event: React.DragEvent) => {
+        event.preventDefault()
+        const targetDirectoryId = resolveSelectedDirectoryId()
+        const items = event.dataTransfer.items
+
+        for (let index = 0; index < items.length; index += 1) {
+            const entry = (items[index] as any).webkitGetAsEntry?.()
+            if (entry) {
+                await processEntry(entry, targetDirectoryId)
+            }
+        }
+    }
+
+    const sortedFileStructure = sortFileSystemItem(fileStructure)
 
     return (
-        <div
-            onClick={handleClickOutside}
-            className="flex flex-grow flex-col bg-dark/30 text-white/80"
-        >
-            <div className="flex items-center justify-between p-2 border-b border-white/10">
-                <h2 className="text-lg font-semibold">Explorer</h2>
-                <div className="flex gap-2">
+        <div className="flex h-full flex-grow flex-col bg-[#1E1E1E] text-white">
+            <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={handleFileChange}
+                className="hidden"
+                accept="*/*"
+            />
+            <input
+                ref={folderInputRef}
+                type="file"
+                multiple
+                onChange={handleFolderChange}
+                className="hidden"
+                {...({ webkitdirectory: "", directory: "" } as any)}
+            />
+
+            <div className="flex items-center justify-between border-b border-gray-800 bg-[#252526] px-3 py-2">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    Explorer
+                </h2>
+                <div className="flex gap-1">
                     <button
-                        className="p-1 rounded-md hover:bg-white/10"
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
                         onClick={handleCreateFile}
-                        title="Create File"
+                        title="New File"
                     >
-                        <FilePlus size={18} />
+                        <FilePlus size={16} />
                     </button>
                     <button
-                        className="p-1 rounded-md hover:bg-white/10"
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
                         onClick={handleCreateDirectory}
-                        title="Create Directory"
+                        title="New Folder"
                     >
-                        <FolderPlus size={18} />
+                        <FolderPlus size={16} />
                     </button>
                     <button
-                        className="p-1 rounded-md hover:bg-white/10"
-                        onClick={collapseDirectories}
-                        title="Collapse All Directories"
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+                        onClick={handleImportFile}
+                        title="Import Files"
                     >
-                        <FolderUp size={18} />
+                        <FileUp size={16} />
+                    </button>
+                    <button
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+                        onClick={handleImportFolder}
+                        title="Import Folder"
+                    >
+                        <Upload size={16} />
+                    </button>
+                    <button
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+                        onClick={() => {
+                            const input = document.createElement("input")
+                            input.type = "file"
+                            input.accept = ".zip"
+                            input.onchange = (zipEvent) => {
+                                const target = zipEvent.target as HTMLInputElement
+                                if (target.files && target.files.length > 0) {
+                                    importZip(target.files[0])
+                                }
+                            }
+                            input.click()
+                        }}
+                        title="Import from Zip"
+                    >
+                        <FileArchive size={16} />
+                    </button>
+                    <button
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+                        onClick={collapseDirectories}
+                        title="Collapse Folders"
+                    >
+                        <FolderUp size={16} />
                     </button>
                 </div>
             </div>
+
+            <div className="p-2">
+                <DropZone />
+            </div>
+
             <div
-                className={cn("flex-grow overflow-auto p-2", {
+                onDrop={handleDrop}
+                onDragOver={(event) => event.preventDefault()}
+                className={cn("flex-grow overflow-auto", {
                     "h-[calc(80vh-170px)]": !minHeightReached,
                     "h-[85vh]": minHeightReached,
                 })}
                 ref={explorerRef}
+                onClick={(event) => {
+                    if (event.target === event.currentTarget) {
+                        setSelectedDirId(fileStructure.id)
+                    }
+                }}
             >
-                {sortedFileStructure.children &&
-                    sortedFileStructure.children.map((item) => (
-                        <Directory
+                {sortedFileStructure.children && sortedFileStructure.children.length > 0 ? (
+                    sortedFileStructure.children.map((item: FileSystemItem) => (
+                        <TreeNode
                             key={item.id}
-                            item={item}
-                            setSelectedDirId={setSelectedDirId}
+                            node={item}
+                            selectedDirId={selectedDirId}
+                            pathSegments={[]}
+                            parentDirectoryId={fileStructure.id}
+                            onSelectDirectory={setSelectedDirId}
+                            onOpenInTerminal={openPathInTerminal}
                         />
-                    ))}
+                    ))
+                ) : (
+                    <div className="flex h-full flex-col items-center justify-center px-4 text-sm text-gray-500">
+                        <FolderIcon size={48} className="mb-3 opacity-30" />
+                        <p className="mb-2 text-center">No files yet</p>
+                        <p className="text-center text-xs text-gray-600">
+                            Create a new file or import from your device
+                        </p>
+                    </div>
+                )}
             </div>
         </div>
-    );
+    )
 }
 
-function Directory({
-    item,
-    setSelectedDirId,
-}: {
-    item: FileSystemItem;
-    setSelectedDirId: (id: Id) => void;
-}) {
-    const [isEditing, setEditing] = useState<boolean>(false);
-    const dirRef = useRef<HTMLDivElement | null>(null);
-    const { coords, menuOpen, setMenuOpen } = useContextMenu({
-        ref: dirRef,
-    });
-    const { deleteDirectory, toggleDirectory } = useFileSystem();
-
-    const handleDirClick = (dirId: string) => {
-        setSelectedDirId(dirId);
-        toggleDirectory(dirId);
-    };
-
-    const handleRenameDirectory = (e: MouseEvent) => {
-        e.stopPropagation();
-        setMenuOpen(false);
-        setEditing(true);
-    };
-
-    const handleDeleteDirectory = (e: MouseEvent, id: Id) => {
-        e.stopPropagation();
-        setMenuOpen(false);
-        const isConfirmed = confirm(
-            `Are you sure you want to delete directory?`
-        );
-        if (isConfirmed) {
-            deleteDirectory(id);
-        }
-    };
-
-    useEffect(() => {
-        const dirNode = dirRef.current;
-        if (!dirNode) return;
-        dirNode.tabIndex = 0;
-        const handleF2 = (e: KeyboardEvent) => {
-            e.stopPropagation();
-            if (e.key === "F2") {
-                setEditing(true);
-            }
-        };
-        dirNode.addEventListener("keydown", handleF2);
-        return () => {
-            dirNode.removeEventListener("keydown", handleF2);
-        };
-    }, []);
-
-    if (item.type === "file") {
-        return <File item={item} setSelectedDirId={setSelectedDirId} />;
-    }
-
-    return (
-        <div className="text-sm">
-            <div
-                className="flex items-center w-full px-2 py-1 rounded-md cursor-pointer hover:bg-white/5"
-                onClick={() => handleDirClick(item.id)}
-                ref={dirRef}
-            >
-                {item.isOpen ? (
-                    <ChevronDown size={16} className="mr-1 min-w-fit" />
-                ) : (
-                    <ChevronRight size={16} className="mr-1 min-w-fit" />
-                )}
-                {item.isOpen ? (
-                    <FolderOpen size={16} className="mr-2 min-w-fit text-sky-400" />
-                ) : (
-                    <FolderIcon size={16} className="mr-2 min-w-fit text-sky-400" />
-                )}
-                {isEditing ? (
-                    <RenameView
-                        id={item.id}
-                        preName={item.name}
-                        type="directory"
-                        setEditing={setEditing}
-                    />
-                ) : (
-                    <p
-                        className="flex-grow overflow-hidden truncate"
-                        title={item.name}
-                    >
-                        {item.name}
-                    </p>
-                )}
-            </div>
-            <div
-                className={cn(
-                    "pl-4 border-l border-white/10 ml-3",
-                    { hidden: !item.isOpen },
-                    { block: item.isOpen }
-                )}
-            >
-                {item.children &&
-                    item.children.map((child) => (
-                        <Directory
-                            key={child.id}
-                            item={child}
-                            setSelectedDirId={setSelectedDirId}
-                        />
-                    ))}
-            </div>
-
-            {menuOpen && (
-                <DirectoryMenu
-                    handleDeleteDirectory={handleDeleteDirectory}
-                    handleRenameDirectory={handleRenameDirectory}
-                    id={item.id}
-                    left={coords.x}
-                    top={coords.y}
-                />
-            )}
-        </div>
-    );
-}
-
-const File = ({
-    item,
-    setSelectedDirId,
-}: {
-    item: FileSystemItem;
-    setSelectedDirId: (id: Id) => void;
-}) => {
-    const { deleteFile, openFile } = useFileSystem();
-    const [isEditing, setEditing] = useState<boolean>(false);
-    const { setIsSidebarOpen } = useViews();
-    const { isMobile } = useWindowDimensions();
-    const { activityState, setActivityState } = useAppContext();
-    const fileRef = useRef<HTMLDivElement | null>(null);
-    const { menuOpen, coords, setMenuOpen } = useContextMenu({
-        ref: fileRef,
-    });
-
-    const handleFileClick = (fileId: string) => {
-        if (isEditing) return;
-        setSelectedDirId(fileId);
-        openFile(fileId);
-        if (isMobile) {
-            setIsSidebarOpen(false);
-        }
-        if (activityState === ACTIVITY_STATE.DRAWING) {
-            setActivityState(ACTIVITY_STATE.CODING);
-        }
-    };
-
-    const handleRenameFile = (e: MouseEvent) => {
-        e.stopPropagation();
-        setEditing(true);
-        setMenuOpen(false);
-    };
-
-    const handleDeleteFile = (e: MouseEvent, id: Id) => {
-        e.stopPropagation();
-        setMenuOpen(false);
-        const isConfirmed = confirm(`Are you sure you want to delete file?`);
-        if (isConfirmed) {
-            deleteFile(id);
-        }
-    };
-
-    useEffect(() => {
-        const fileNode = fileRef.current;
-        if (!fileNode) return;
-        fileNode.tabIndex = 0;
-        const handleF2 = (e: KeyboardEvent) => {
-            e.stopPropagation();
-            if (e.key === "F2") {
-                setEditing(true);
-            }
-        };
-        fileNode.addEventListener("keydown", handleF2);
-        return () => {
-            fileNode.removeEventListener("keydown", handleF2);
-        };
-    }, []);
-
-    return (
-        <div
-            className="flex items-center w-full px-2 py-1 rounded-md cursor-pointer hover:bg-white/5"
-            onClick={() => handleFileClick(item.id)}
-            ref={fileRef}
-        >
-            <Icon
-                icon={getIconClassName(item.name)}
-                fontSize={16}
-                className="mr-2 min-w-fit"
-            />
-            {isEditing ? (
-                <RenameView
-                    id={item.id}
-                    preName={item.name}
-                    type="file"
-                    setEditing={setEditing}
-                />
-            ) : (
-                <p
-                    className="flex-grow overflow-hidden truncate"
-                    title={item.name}
-                >
-                    {item.name}
-                </p>
-            )}
-
-            {menuOpen && (
-                <FileMenu
-                    top={coords.y}
-                    left={coords.x}
-                    id={item.id}
-                    handleRenameFile={handleRenameFile}
-                    handleDeleteFile={handleDeleteFile}
-                />
-            )}
-        </div>
-    );
-};
-
-const Menu = ({
-    top,
-    left,
-    children,
-}: {
-    top: number;
-    left: number;
-    children: React.ReactNode;
-}) => {
-    return (
-        <div
-            className="absolute z-50 w-40 rounded-md border border-white/10 bg-[#1c1c1c] shadow-lg"
-            style={{ top, left }}
-        >
-            {children}
-        </div>
-    );
-};
-
-const MenuItem = ({
-    onClick,
-    children,
-    className,
-}: {
-    onClick: (e: MouseEvent) => void;
-    children: React.ReactNode;
-    className?: string;
-}) => {
-    return (
-        <button
-            onClick={onClick}
-            className={cn(
-                "flex items-center w-full gap-2 px-3 py-2 text-sm text-left text-white/80 hover:bg-white/5",
-                className
-            )}
-        >
-            {children}
-        </button>
-    );
-};
-
-const FileMenu = ({
-    top,
-    left,
-    id,
-    handleRenameFile,
-    handleDeleteFile,
-}: {
-    top: number;
-    left: number;
-    id: Id;
-    handleRenameFile: (e: MouseEvent) => void;
-    handleDeleteFile: (e: MouseEvent, id: Id) => void;
-}) => {
-    return (
-        <Menu top={top} left={left}>
-            <MenuItem onClick={handleRenameFile}>
-                <Pencil size={16} />
-                Rename
-            </MenuItem>
-            <MenuItem
-                onClick={(e) => handleDeleteFile(e, id)}
-                className="text-red-500"
-            >
-                <Trash2 size={16} />
-                Delete
-            </MenuItem>
-        </Menu>
-    );
-};
-
-const DirectoryMenu = ({
-    top,
-    left,
-    id,
-    handleRenameDirectory,
-    handleDeleteDirectory,
-}: {
-    top: number;
-    left: number;
-    id: Id;
-    handleRenameDirectory: (e: MouseEvent) => void;
-    handleDeleteDirectory: (e: MouseEvent, id: Id) => void;
-}) => {
-    return (
-        <Menu top={top} left={left}>
-            <MenuItem onClick={handleRenameDirectory}>
-                <Pencil size={16} />
-                Rename
-            </MenuItem>
-            <MenuItem
-                onClick={(e) => handleDeleteDirectory(e, id)}
-                className="text-red-500"
-            >
-                <Trash2 size={16} />
-                Delete
-            </MenuItem>
-        </Menu>
-    );
-};
-
-export default FileStructureView;
+export default FileStructureView

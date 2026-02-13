@@ -29,6 +29,15 @@ export const useSocket = (): SocketContextType => {
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3000"
 
+const upsertUser = (users: RemoteUser[], user: RemoteUser): RemoteUser[] => {
+    const existingIndex = users.findIndex((u) => u.socketId === user.socketId)
+    if (existingIndex === -1) return [...users, user]
+
+    const updatedUsers = [...users]
+    updatedUsers[existingIndex] = { ...updatedUsers[existingIndex], ...user }
+    return updatedUsers
+}
+
 const SocketProvider = ({ children }: { children: ReactNode }) => {
     const {
         setUsers,
@@ -69,7 +78,7 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
     const handleJoiningAccept = useCallback(
         ({ user, users }: { user: User; users: RemoteUser[] }) => {
             setCurrentUser(user)
-            setUsers(users)
+            setUsers(users.reduce<RemoteUser[]>((acc, roomUser) => upsertUser(acc, roomUser), []))
             toast.dismiss()
             setStatus(USER_STATUS.JOINED)
 
@@ -82,16 +91,23 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
 
     const handleUserJoined = useCallback(
         ({ user }: { user: RemoteUser }) => {
-            toast.success(`${user.username} joined the room`)
-            setUsers(prevUsers => [...prevUsers, user])
+            setUsers((prevUsers) => {
+                const hasUser = prevUsers.some((u) => u.socketId === user.socketId)
+                if (!hasUser) {
+                    toast.success(`${user.username} joined the room`)
+                }
+                return upsertUser(prevUsers, user)
+            })
         },
         [setUsers],
     )
 
     const handleUserLeft = useCallback(
-        ({ user }: { user: User }) => {
+        ({ user }: { user: RemoteUser }) => {
             toast.success(`${user.username} left the room`)
-            setUsers(prevUsers => prevUsers.filter((u: User) => u.username !== user.username))
+            setUsers((prevUsers) =>
+                prevUsers.filter((u: RemoteUser) => u.socketId !== user.socketId),
+            )
         },
         [setUsers],
     )
@@ -121,14 +137,14 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
         socket.on(SocketEvent.SYNC_DRAWING, handleDrawingSync)
 
         return () => {
-            socket.off("connect_error")
-            socket.off("connect_failed")
-            socket.off(SocketEvent.USERNAME_EXISTS)
-            socket.off(SocketEvent.JOIN_ACCEPTED)
-            socket.off(SocketEvent.USER_JOINED)
-            socket.off(SocketEvent.USER_DISCONNECTED)
-            socket.off(SocketEvent.REQUEST_DRAWING)
-            socket.off(SocketEvent.SYNC_DRAWING)
+            socket.off("connect_error", handleError)
+            socket.off("connect_failed", handleError)
+            socket.off(SocketEvent.USERNAME_EXISTS, handleUsernameExist)
+            socket.off(SocketEvent.JOIN_ACCEPTED, handleJoiningAccept)
+            socket.off(SocketEvent.USER_JOINED, handleUserJoined)
+            socket.off(SocketEvent.USER_DISCONNECTED, handleUserLeft)
+            socket.off(SocketEvent.REQUEST_DRAWING, handleRequestDrawing)
+            socket.off(SocketEvent.SYNC_DRAWING, handleDrawingSync)
         }
     }, [
         handleDrawingSync,

@@ -29,6 +29,13 @@ interface FileContext {
     renameFile: (fileId: Id, newName: FileName) => boolean
     deleteFile: (fileId: Id) => void
     downloadFilesAndFolders: () => void
+    importFile: (
+        parentDirId: Id,
+        fileName: string,
+        fileContent: string,
+        sendToSocket?: boolean,
+    ) => Id | null,
+    importZip: (file: File, parentId?: string) => Promise<void>
 }
 
 export { FileSystemItem, FileContent, FileContext, Id, FileName }

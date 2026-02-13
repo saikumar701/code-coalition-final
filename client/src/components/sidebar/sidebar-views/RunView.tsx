@@ -1,6 +1,6 @@
 import { useRunCode } from "@/context/RunCodeContext"
 import useResponsive from "@/hooks/useResponsive"
-import Terminal from "@/components/terminal/Terminal"
+import TerminalView from "@/components/terminal-view"
 import { ChangeEvent, useState } from "react"
 import toast from "react-hot-toast"
 import { LuCopy } from "react-icons/lu"
@@ -83,7 +83,7 @@ function RunView() {
 
     const renderTerminal = () => (
         <div className="h-full w-full">
-            <Terminal variant="panel" />
+            <TerminalView />
         </div>
     )
 
