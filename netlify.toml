@@ -1,9 +1,9 @@
 [build]
-  base = "client"
-  command = "npm ci && npm run build"
-  publish = "dist"
+  command = "cd client && npm ci && npm run build"
+  publish = "client/dist"
 
 [build.environment]
+  NODE_VERSION = "20"
   VITE_BACKEND_URL = "https://code-coalition-backend-production.up.railway.app"
 
 [[redirects]]
