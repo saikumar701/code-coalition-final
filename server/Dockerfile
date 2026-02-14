@@ -3,6 +3,9 @@ FROM node:18-alpine AS builder
 
 WORKDIR /build
 
+# node-pty is a native module; node-gyp needs python + build tools
+RUN apk add --no-cache python3 make g++
+
 # Copy package files and install dependencies
 COPY package*.json ./
 
@@ -22,7 +25,7 @@ WORKDIR /app
 # Copy the `dist` folder from the builder stage
 COPY --from=builder /build/dist dist/
 COPY --from=builder /build/public public/
-COPY --from=builder /build/node_modules /node_modules
+COPY --from=builder /build/node_modules ./node_modules
 COPY --from=builder /build/package*.json .
 
 # Optional Expose a port
