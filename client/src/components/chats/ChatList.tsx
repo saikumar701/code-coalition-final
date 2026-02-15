@@ -61,22 +61,33 @@ function ChatList() {
             ref={messagesContainerRef}
             onScroll={handleScroll}
         >
-            {messages.map((message, index) => {
+            {messages.map((message) => {
                 const bubbleColor = getUserColor(message.username)
+                const isOwnMessage = message.username === currentUser.username
+                const directLabel = isOwnMessage
+                    ? `To ${message.recipientUsername || "selected user"}`
+                    : "Direct"
 
                 return (
                     <div
-                        key={index}
+                        key={message.id}
                         className={
                             `mb-2 w-[80%] self-end break-words rounded-md px-3 py-2 
-                            ${message.username === currentUser.username ? "ml-auto" : ""} 
+                            ${isOwnMessage ? "ml-auto" : ""} 
                             ${bubbleColor}`
                         }
                     >
                         <div className="flex justify-between">
-                            <span className="text-xs text-white">
-                                {message.username}
-                            </span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-white">
+                                    {message.username}
+                                </span>
+                                {message.isDirect && (
+                                    <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] text-gray-100">
+                                        {directLabel}
+                                    </span>
+                                )}
+                            </div>
                             <span className="text-xs text-gray-200">
                                 {message.timestamp}
                             </span>

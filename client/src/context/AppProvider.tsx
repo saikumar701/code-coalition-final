@@ -7,6 +7,7 @@ import { SettingContextProvider } from "./SettingContext.jsx"
 import { SocketProvider } from "./SocketContext.jsx"
 import { CopilotContextProvider } from "./CopilotContext.js"
 import { FileShareContextProvider } from "./FileShareContext.js"
+import { ScreenShareContextProvider } from "./ScreenShareContext.js"
 
 function AppProvider({ children }: { children: ReactNode }) {
     return (
@@ -18,7 +19,9 @@ function AppProvider({ children }: { children: ReactNode }) {
                             <RunCodeContextProvider>
                                 <ChatContextProvider>
                                     <FileShareContextProvider>
-                                        {children}
+                                        <ScreenShareContextProvider>
+                                            {children}
+                                        </ScreenShareContextProvider>
                                     </FileShareContextProvider>
                                 </ChatContextProvider>
                             </RunCodeContextProvider>

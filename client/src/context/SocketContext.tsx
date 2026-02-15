@@ -120,8 +120,15 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
     )
 
     const handleDrawingSync = useCallback(
-        ({ drawingData }: { drawingData: DrawingData }) => {
-            setDrawingData(drawingData)
+        ({
+            drawingData,
+            snapshot,
+        }: {
+            drawingData?: DrawingData
+            snapshot?: DrawingData
+        }) => {
+            const normalizedDrawingData = drawingData ?? snapshot ?? null
+            setDrawingData(normalizedDrawingData)
         },
         [setDrawingData],
     )

@@ -17,6 +17,8 @@ export const createInitialFileStructure = (): FileSystemItem => ({
             type: "file",
             name: "index.js",
             content: initialCode,
+            contentEncoding: "utf8",
+            mimeType: "text/javascript",
         },
     ],
 })

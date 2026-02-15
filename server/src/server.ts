@@ -10,6 +10,7 @@ import * as pty from "node-pty"
 import os from "os"
 import fs from "fs"
 import fsPromises from "fs/promises"
+import { randomBytes } from "crypto"
 
 const loadServerEnv = () => {
 	const envPaths = [
@@ -48,6 +49,7 @@ const workspaceRoot = path.resolve(process.cwd(), ".workspaces")
 const roomFileTrees = new Map<string, WorkspaceFileSystemItem>()
 const roomTrackedPaths = new Map<string, Set<string>>()
 const roomSyncTimers = new Map<string, NodeJS.Timeout>()
+const roomScreenShareMap = new Map<string, ScreenShareInfo>()
 const maxFileShareEnvValue = Number(process.env.FILE_SHARE_MAX_SIZE_MB || "20")
 const maxFileShareSizeMb =
 	Number.isFinite(maxFileShareEnvValue) && maxFileShareEnvValue > 0
@@ -55,6 +57,16 @@ const maxFileShareSizeMb =
 		: 20
 const maxFileShareSizeBytes = maxFileShareSizeMb * 1024 * 1024
 const maxFileShareNameLength = 255
+const maxExternalImportEnvValue = Number(process.env.EXTERNAL_IMPORT_MAX_SIZE_MB || "15")
+const maxExternalImportSizeMb =
+	Number.isFinite(maxExternalImportEnvValue) && maxExternalImportEnvValue > 0
+		? maxExternalImportEnvValue
+		: 15
+const maxExternalImportSizeBytes = maxExternalImportSizeMb * 1024 * 1024
+const oauthStateStore = new Map<string, OAuthStateRecord>()
+const oauthStateTtlMs = 10 * 60 * 1000
+const googleDriveScope = "https://www.googleapis.com/auth/drive.readonly"
+const githubScope = "repo read:user"
 
 interface WorkspaceFileSystemItem {
 	id: string
@@ -62,12 +74,16 @@ interface WorkspaceFileSystemItem {
 	type: "file" | "directory"
 	children?: WorkspaceFileSystemItem[]
 	content?: string
+	contentEncoding?: "utf8" | "base64"
+	mimeType?: string
 }
 
 interface WorkspaceEntry {
 	relativePath: string
 	type: "file" | "directory"
 	content?: string
+	contentEncoding?: "utf8" | "base64"
+	mimeType?: string
 }
 
 interface IncomingSharedFile {
@@ -89,6 +105,43 @@ interface SharedFilePayload {
 	recipientSocketId: string | null
 	roomId: string
 	sentAt: string
+}
+
+interface ChatMessagePayload {
+	id: string
+	message: string
+	username: string
+	timestamp: string
+	isDirect: boolean
+	recipientSocketId: string | null
+	recipientUsername: string | null
+}
+
+interface ScreenShareInfo {
+	socketId: string
+	username: string
+}
+
+interface ScreenShareSignalEnvelope {
+	type: "offer" | "answer" | "ice-candidate"
+	sdp?: {
+		type?: string
+		sdp?: string
+	}
+	candidate?: {
+		candidate?: string
+		sdpMid?: string | null
+		sdpMLineIndex?: number | null
+		usernameFragment?: string | null
+	}
+}
+
+type OAuthProvider = "github" | "gdrive"
+
+interface OAuthStateRecord {
+	provider: OAuthProvider
+	origin: string
+	createdAt: number
 }
 
 if (!fs.existsSync(workspaceRoot)) {
@@ -182,6 +235,8 @@ function getWorkspaceEntries(children: WorkspaceFileSystemItem[], parentPath = "
 			relativePath: childPath,
 			type: "file",
 			content: child.content || "",
+			contentEncoding: child.contentEncoding || "utf8",
+			mimeType: child.mimeType || "text/plain",
 		})
 	})
 
@@ -221,7 +276,12 @@ async function synchronizeWorkspaceToDisk(roomId: string): Promise<void> {
 	for (const fileEntry of fileEntries) {
 		const absolutePath = path.join(workspacePath, ...fileEntry.relativePath.split("/"))
 		await fsPromises.mkdir(path.dirname(absolutePath), { recursive: true })
-		await fsPromises.writeFile(absolutePath, fileEntry.content || "", "utf8")
+		if (fileEntry.contentEncoding === "base64") {
+			const fileBuffer = Buffer.from(fileEntry.content || "", "base64")
+			await fsPromises.writeFile(absolutePath, Uint8Array.from(fileBuffer))
+		} else {
+			await fsPromises.writeFile(absolutePath, fileEntry.content || "", "utf8")
+		}
 	}
 
 	roomTrackedPaths.set(roomId, nextPaths)
@@ -288,6 +348,206 @@ function parseDataUrl(dataUrl: string): { mimeType: string; size: number } | nul
 		mimeType,
 		size: getBase64DecodedSize(encodedBody),
 	}
+}
+
+function parseFileNameFromContentDisposition(headerValue: string | null): string | null {
+	if (!headerValue) return null
+
+	const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i)
+	if (utf8Match?.[1]) {
+		try {
+			return decodeURIComponent(utf8Match[1].replace(/["']/g, ""))
+		} catch {
+			return utf8Match[1].replace(/["']/g, "")
+		}
+	}
+
+	const simpleMatch = headerValue.match(/filename="?([^";]+)"?/i)
+	if (simpleMatch?.[1]) {
+		return simpleMatch[1]
+	}
+
+	return null
+}
+
+function sanitizeImportedFileName(fileName: string): string {
+	const cleaned = fileName
+		.replace(/[/\\?%*:|"<>]/g, "_")
+		.trim()
+	return cleaned || `imported-file-${Date.now()}`
+}
+
+function getFileNameFromPath(pathname: string): string {
+	const parts = pathname.split("/").filter(Boolean)
+	const lastPart = parts[parts.length - 1] || ""
+	if (!lastPart) return ""
+
+	try {
+		return decodeURIComponent(lastPart)
+	} catch {
+		return lastPart
+	}
+}
+
+function extractDriveFileId(urlValue: string): string | null {
+	const directMatch = urlValue.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)
+	if (directMatch?.[1]) return directMatch[1]
+
+	const openMatch = urlValue.match(/[?&]id=([a-zA-Z0-9_-]+)/)
+	if (openMatch?.[1]) return openMatch[1]
+
+	const ucMatch = urlValue.match(/[?&]export=download&id=([a-zA-Z0-9_-]+)/)
+	if (ucMatch?.[1]) return ucMatch[1]
+
+	return null
+}
+
+function getGithubRawUrl(inputUrl: URL): string | null {
+	const host = inputUrl.hostname.toLowerCase()
+	if (host === "raw.githubusercontent.com") {
+		return inputUrl.toString()
+	}
+
+	if (host !== "github.com") {
+		return null
+	}
+
+	const parts = inputUrl.pathname.split("/").filter(Boolean)
+	if (parts.length < 5 || parts[2] !== "blob") {
+		return null
+	}
+
+	const owner = parts[0]
+	const repo = parts[1]
+	const branch = parts[3]
+	const filePath = parts.slice(4).join("/")
+	if (!owner || !repo || !branch || !filePath) {
+		return null
+	}
+
+	return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`
+}
+
+function isLikelyTextFile(mimeType: string, buffer: Buffer): boolean {
+	if (!mimeType || mimeType === "application/octet-stream") {
+		const nullByteIndex = buffer.indexOf(0)
+		return nullByteIndex === -1
+	}
+
+	if (mimeType.startsWith("text/")) {
+		return true
+	}
+
+	return /(json|javascript|typescript|xml|yaml|yml|csv|markdown|md|x-sh|sql|svg)/i.test(
+		mimeType,
+	)
+}
+
+function normalizeOrigin(originValue: string | null | undefined): string {
+	if (!originValue) return ""
+
+	try {
+		const parsedOrigin = new URL(originValue)
+		return parsedOrigin.origin
+	} catch {
+		return ""
+	}
+}
+
+function getServerPublicBaseUrl(req: Request): string {
+	const configuredBaseUrl = normalizeOrigin(process.env.SERVER_PUBLIC_URL)
+	if (configuredBaseUrl) return configuredBaseUrl
+
+	const forwardedProto =
+		typeof req.headers["x-forwarded-proto"] === "string"
+			? req.headers["x-forwarded-proto"]
+			: ""
+	const protocol = forwardedProto || req.protocol || "http"
+	const host = req.get("host")
+	return `${protocol}://${host}`
+}
+
+function buildOAuthRedirectUri(req: Request, provider: OAuthProvider): string {
+	const serverBaseUrl = getServerPublicBaseUrl(req)
+	const pathSuffix = provider === "github" ? "github" : "gdrive"
+	return `${serverBaseUrl}/api/oauth/${pathSuffix}/callback`
+}
+
+function cleanupOAuthStateStore() {
+	const now = Date.now()
+	for (const [state, record] of oauthStateStore.entries()) {
+		if (now - record.createdAt > oauthStateTtlMs) {
+			oauthStateStore.delete(state)
+		}
+	}
+}
+
+function createOAuthState(provider: OAuthProvider, origin: string): string {
+	cleanupOAuthStateStore()
+	const state = randomBytes(24).toString("hex")
+	oauthStateStore.set(state, {
+		provider,
+		origin,
+		createdAt: Date.now(),
+	})
+	return state
+}
+
+function consumeOAuthState(state: string, provider: OAuthProvider): OAuthStateRecord | null {
+	cleanupOAuthStateStore()
+	const record = oauthStateStore.get(state)
+	if (!record || record.provider !== provider) {
+		return null
+	}
+	oauthStateStore.delete(state)
+	return record
+}
+
+function getOAuthCallbackHtml({
+	success,
+	provider,
+	origin,
+	accessToken,
+	errorMessage,
+}: {
+	success: boolean
+	provider: OAuthProvider
+	origin: string
+	accessToken?: string
+	errorMessage?: string
+}): string {
+	const sanitizedOrigin = origin || "*"
+	const payload = success
+		? {
+				type: "oauth-success",
+				provider,
+				accessToken,
+			}
+		: {
+				type: "oauth-error",
+				provider,
+				error: errorMessage || "OAuth failed.",
+			}
+
+	const serializedPayload = JSON.stringify(payload).replace(/</g, "\\u003c")
+	const serializedOrigin = JSON.stringify(sanitizedOrigin)
+
+	return `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>OAuth</title></head>
+<body>
+<script>
+  (function () {
+    var payload = ${serializedPayload};
+    var targetOrigin = ${serializedOrigin};
+    if (window.opener && typeof window.opener.postMessage === "function") {
+      window.opener.postMessage(payload, targetOrigin);
+    }
+    window.close();
+  })();
+</script>
+</body>
+</html>`
 }
 
 io.on("connection", (socket) => {
@@ -373,18 +633,31 @@ io.on("connection", (socket) => {
 			totalUsersInRoom: users.length,
 		})
 		io.to(socket.id).emit(SocketEvent.JOIN_ACCEPTED, { user, users })
+		const activeScreenShare = roomScreenShareMap.get(normalizedRoomId)
+		io.to(socket.id).emit(SocketEvent.SCREEN_SHARE_STATUS, {
+			sharerSocketId: activeScreenShare?.socketId || null,
+			sharerUsername: activeScreenShare?.username || null,
+		})
 	})
 
 	socket.on("disconnecting", () => {
 		const user = userSocketMap.find((u) => u.socketId === socket.id) || null
 		if (user) {
 			const roomId = user.roomId
+			const activeScreenShare = roomScreenShareMap.get(roomId)
+			if (activeScreenShare?.socketId === socket.id) {
+				roomScreenShareMap.delete(roomId)
+				socket.broadcast.to(roomId).emit(SocketEvent.SCREEN_SHARE_STOPPED, {
+					sharerSocketId: socket.id,
+				})
+			}
 			socket.broadcast
 				.to(roomId)
 				.emit(SocketEvent.USER_DISCONNECTED, { user })
 			userSocketMap = userSocketMap.filter((u) => u.socketId !== socket.id)
 			socket.leave(roomId)
 			if (getUsersInRoom(roomId).length === 0) {
+				roomScreenShareMap.delete(roomId)
 				const timer = roomSyncTimers.get(roomId)
 				if (timer) {
 					clearTimeout(timer)
@@ -550,13 +823,133 @@ io.on("connection", (socket) => {
 		socket.broadcast.to(roomId).emit(SocketEvent.USER_ONLINE, { socketId })
 	})
 
-	// Handle chat actions
-	socket.on(SocketEvent.SEND_MESSAGE, ({ message }) => {
+	// Handle screen share actions
+	socket.on(SocketEvent.SCREEN_SHARE_STATUS_REQUEST, () => {
 		const roomId = getRoomId(socket.id)
 		if (!roomId) return
-		socket.broadcast
-			.to(roomId)
-			.emit(SocketEvent.RECEIVE_MESSAGE, { message })
+
+		const activeScreenShare = roomScreenShareMap.get(roomId)
+		io.to(socket.id).emit(SocketEvent.SCREEN_SHARE_STATUS, {
+			sharerSocketId: activeScreenShare?.socketId || null,
+			sharerUsername: activeScreenShare?.username || null,
+		})
+	})
+
+	socket.on(SocketEvent.SCREEN_SHARE_START, () => {
+		const user = getUserBySocketId(socket.id)
+		if (!user) return
+
+		const roomId = user.roomId
+		const previousShare = roomScreenShareMap.get(roomId)
+		if (previousShare && previousShare.socketId !== socket.id) {
+			io.to(previousShare.socketId).emit(SocketEvent.SCREEN_SHARE_STOPPED, {
+				sharerSocketId: previousShare.socketId,
+			})
+		}
+
+		roomScreenShareMap.set(roomId, {
+			socketId: socket.id,
+			username: user.username,
+		})
+
+		io.to(roomId).emit(SocketEvent.SCREEN_SHARE_STARTED, {
+			sharerSocketId: socket.id,
+			sharerUsername: user.username,
+		})
+	})
+
+	socket.on(SocketEvent.SCREEN_SHARE_STOP, () => {
+		const user = getUserBySocketId(socket.id)
+		if (!user) return
+
+		const roomId = user.roomId
+		const activeScreenShare = roomScreenShareMap.get(roomId)
+		if (activeScreenShare?.socketId !== socket.id) return
+
+		roomScreenShareMap.delete(roomId)
+		io.to(roomId).emit(SocketEvent.SCREEN_SHARE_STOPPED, {
+			sharerSocketId: socket.id,
+		})
+	})
+
+	socket.on(
+		SocketEvent.SCREEN_SHARE_SIGNAL,
+		({
+			targetSocketId,
+			payload,
+		}: {
+			targetSocketId?: string
+			payload?: ScreenShareSignalEnvelope
+		}) => {
+			if (!targetSocketId || !payload) return
+
+			const sourceUser = getUserBySocketId(socket.id)
+			if (!sourceUser) return
+
+			const targetUser = getUserBySocketId(targetSocketId)
+			if (!targetUser || targetUser.roomId !== sourceUser.roomId) return
+
+			io.to(targetSocketId).emit(SocketEvent.SCREEN_SHARE_SIGNAL, {
+				fromSocketId: socket.id,
+				fromUsername: sourceUser.username,
+				payload,
+			})
+		},
+	)
+
+	// Handle chat actions
+	socket.on(SocketEvent.SEND_MESSAGE, ({
+		message,
+		recipientSocketId,
+	}: {
+		message?: Partial<ChatMessagePayload>
+		recipientSocketId?: string | null
+	}) => {
+		const roomId = getRoomId(socket.id)
+		if (!roomId) return
+		const sender = getUserBySocketId(socket.id)
+		if (!sender) return
+
+		const text = typeof message?.message === "string"
+			? message.message.trim()
+			: ""
+		if (!text) return
+
+		const outgoingMessage: ChatMessagePayload = {
+			id:
+				typeof message?.id === "string" && message.id.trim().length > 0
+					? message.id
+					: `${socket.id}-${Date.now()}`,
+			message: text,
+			username: sender.username,
+			timestamp:
+				typeof message?.timestamp === "string" &&
+				message.timestamp.trim().length > 0
+					? message.timestamp
+					: new Date().toISOString(),
+			isDirect: false,
+			recipientSocketId: null,
+			recipientUsername: null,
+		}
+
+		if (recipientSocketId && recipientSocketId !== socket.id) {
+			const targetUser = getUserBySocketId(recipientSocketId)
+			if (!targetUser || targetUser.roomId !== roomId) return
+
+			io.to(targetUser.socketId).emit(SocketEvent.RECEIVE_MESSAGE, {
+				message: {
+					...outgoingMessage,
+					isDirect: true,
+					recipientSocketId: targetUser.socketId,
+					recipientUsername: targetUser.username,
+				},
+			})
+			return
+		}
+
+		socket.broadcast.to(roomId).emit(SocketEvent.RECEIVE_MESSAGE, {
+			message: outgoingMessage,
+		})
 	})
 
 	socket.on(
@@ -747,9 +1140,14 @@ io.on("connection", (socket) => {
 			.emit(SocketEvent.REQUEST_DRAWING, { socketId: socket.id })
 	})
 
-	socket.on(SocketEvent.SYNC_DRAWING, ({ snapshot, socketId }) => {
-		// Send snapshot ONLY to the requesting socket
-		socket.to(socketId).emit(SocketEvent.SYNC_DRAWING, { snapshot })
+	socket.on(SocketEvent.SYNC_DRAWING, ({ snapshot, drawingData, socketId }) => {
+		if (!socketId) return
+		const normalizedDrawingData = drawingData ?? snapshot ?? null
+		// Keep both keys for backward compatibility between deployed clients.
+		socket.to(socketId).emit(SocketEvent.SYNC_DRAWING, {
+			drawingData: normalizedDrawingData,
+			snapshot: normalizedDrawingData,
+		})
 	})
 
 	socket.on(SocketEvent.DRAWING_UPDATE, ({ diff }) => {
@@ -882,6 +1280,427 @@ app.post("/api/copilot/generate", async (req: Request, res: Response) => {
 	} catch (error) {
 		console.error("Copilot API error:", error)
 		res.status(500).json({ error: `Failed to generate code: ${(error as Error).message}` })
+	}
+})
+
+app.get("/api/oauth/:provider/start", (req: Request, res: Response) => {
+	const providerParam = String(req.params.provider || "").toLowerCase()
+	const provider: OAuthProvider | null =
+		providerParam === "github"
+			? "github"
+			: providerParam === "gdrive"
+				? "gdrive"
+				: null
+
+	if (!provider) {
+		return res.status(400).json({ error: "Unsupported OAuth provider." })
+	}
+
+	const origin = normalizeOrigin(typeof req.query.origin === "string" ? req.query.origin : "")
+	if (!origin) {
+		return res.status(400).json({ error: "A valid origin is required." })
+	}
+
+	const state = createOAuthState(provider, origin)
+	const redirectUri = buildOAuthRedirectUri(req, provider)
+
+	if (provider === "github") {
+		const clientId = (process.env.GITHUB_CLIENT_ID || "").trim()
+		if (!clientId) {
+			return res.status(400).json({
+				error: "GITHUB_CLIENT_ID is not configured on the server.",
+			})
+		}
+
+		const authorizeUrl = new URL("https://github.com/login/oauth/authorize")
+		authorizeUrl.searchParams.set("client_id", clientId)
+		authorizeUrl.searchParams.set("redirect_uri", redirectUri)
+		authorizeUrl.searchParams.set("scope", githubScope)
+		authorizeUrl.searchParams.set("state", state)
+
+		return res.json({
+			provider,
+			authorizeUrl: authorizeUrl.toString(),
+		})
+	}
+
+	const clientId = (process.env.GOOGLE_CLIENT_ID || "").trim()
+	if (!clientId) {
+		return res.status(400).json({
+			error: "GOOGLE_CLIENT_ID is not configured on the server.",
+		})
+	}
+
+	const authorizeUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth")
+	authorizeUrl.searchParams.set("client_id", clientId)
+	authorizeUrl.searchParams.set("redirect_uri", redirectUri)
+	authorizeUrl.searchParams.set("response_type", "code")
+	authorizeUrl.searchParams.set("scope", googleDriveScope)
+	authorizeUrl.searchParams.set("access_type", "online")
+	authorizeUrl.searchParams.set("include_granted_scopes", "true")
+	authorizeUrl.searchParams.set("prompt", "consent")
+	authorizeUrl.searchParams.set("state", state)
+
+	return res.json({
+		provider,
+		authorizeUrl: authorizeUrl.toString(),
+	})
+})
+
+app.get("/api/oauth/github/callback", async (req: Request, res: Response) => {
+	try {
+		const code = typeof req.query.code === "string" ? req.query.code : ""
+		const state = typeof req.query.state === "string" ? req.query.state : ""
+		const oauthError = typeof req.query.error === "string" ? req.query.error : ""
+
+		const stateRecord = consumeOAuthState(state, "github")
+		const origin = stateRecord?.origin || "*"
+		if (!stateRecord) {
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "github",
+						origin,
+						errorMessage: "Invalid or expired OAuth state.",
+					}),
+				)
+		}
+
+		if (oauthError) {
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "github",
+						origin,
+						errorMessage: oauthError,
+					}),
+				)
+		}
+
+		if (!code) {
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "github",
+						origin,
+						errorMessage: "Missing authorization code.",
+					}),
+				)
+		}
+
+		const clientId = (process.env.GITHUB_CLIENT_ID || "").trim()
+		const clientSecret = (process.env.GITHUB_CLIENT_SECRET || "").trim()
+		if (!clientId || !clientSecret) {
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "github",
+						origin,
+						errorMessage: "GitHub OAuth is not configured on the server.",
+					}),
+				)
+		}
+
+		const redirectUri = buildOAuthRedirectUri(req, "github")
+		const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+			method: "POST",
+			headers: {
+				Accept: "application/json",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				client_id: clientId,
+				client_secret: clientSecret,
+				code,
+				redirect_uri: redirectUri,
+			}),
+		})
+
+		const tokenPayload = await tokenResponse.json().catch(() => null)
+		const accessToken =
+			typeof tokenPayload?.access_token === "string"
+				? tokenPayload.access_token
+				: ""
+		if (!tokenResponse.ok || !accessToken) {
+			const errorMessage =
+				typeof tokenPayload?.error_description === "string"
+					? tokenPayload.error_description
+					: "Failed to exchange GitHub OAuth code."
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "github",
+						origin,
+						errorMessage,
+					}),
+				)
+		}
+
+		return res.send(
+			getOAuthCallbackHtml({
+				success: true,
+				provider: "github",
+				origin,
+				accessToken,
+			}),
+		)
+	} catch (error) {
+		console.error("GitHub OAuth callback error:", error)
+		return res
+			.status(500)
+			.send(
+				getOAuthCallbackHtml({
+					success: false,
+					provider: "github",
+					origin: "*",
+					errorMessage: "GitHub OAuth callback failed.",
+				}),
+			)
+	}
+})
+
+app.get("/api/oauth/gdrive/callback", async (req: Request, res: Response) => {
+	try {
+		const code = typeof req.query.code === "string" ? req.query.code : ""
+		const state = typeof req.query.state === "string" ? req.query.state : ""
+		const oauthError = typeof req.query.error === "string" ? req.query.error : ""
+
+		const stateRecord = consumeOAuthState(state, "gdrive")
+		const origin = stateRecord?.origin || "*"
+		if (!stateRecord) {
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "gdrive",
+						origin,
+						errorMessage: "Invalid or expired OAuth state.",
+					}),
+				)
+		}
+
+		if (oauthError) {
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "gdrive",
+						origin,
+						errorMessage: oauthError,
+					}),
+				)
+		}
+
+		if (!code) {
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "gdrive",
+						origin,
+						errorMessage: "Missing authorization code.",
+					}),
+				)
+		}
+
+		const clientId = (process.env.GOOGLE_CLIENT_ID || "").trim()
+		const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || "").trim()
+		if (!clientId || !clientSecret) {
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "gdrive",
+						origin,
+						errorMessage: "Google OAuth is not configured on the server.",
+					}),
+				)
+		}
+
+		const redirectUri = buildOAuthRedirectUri(req, "gdrive")
+		const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/x-www-form-urlencoded",
+			},
+			body: new URLSearchParams({
+				client_id: clientId,
+				client_secret: clientSecret,
+				code,
+				redirect_uri: redirectUri,
+				grant_type: "authorization_code",
+			}).toString(),
+		})
+
+		const tokenPayload = await tokenResponse.json().catch(() => null)
+		const accessToken =
+			typeof tokenPayload?.access_token === "string"
+				? tokenPayload.access_token
+				: ""
+		if (!tokenResponse.ok || !accessToken) {
+			const errorMessage =
+				typeof tokenPayload?.error_description === "string"
+					? tokenPayload.error_description
+					: typeof tokenPayload?.error === "string"
+						? tokenPayload.error
+						: "Failed to exchange Google OAuth code."
+
+			return res
+				.status(400)
+				.send(
+					getOAuthCallbackHtml({
+						success: false,
+						provider: "gdrive",
+						origin,
+						errorMessage,
+					}),
+				)
+		}
+
+		return res.send(
+			getOAuthCallbackHtml({
+				success: true,
+				provider: "gdrive",
+				origin,
+				accessToken,
+			}),
+		)
+	} catch (error) {
+		console.error("Google OAuth callback error:", error)
+		return res
+			.status(500)
+			.send(
+				getOAuthCallbackHtml({
+					success: false,
+					provider: "gdrive",
+					origin: "*",
+					errorMessage: "Google OAuth callback failed.",
+				}),
+			)
+	}
+})
+
+app.post("/api/import/external", async (req: Request, res: Response) => {
+	try {
+		const urlValue =
+			typeof req.body?.url === "string" ? req.body.url.trim() : ""
+
+		if (!urlValue) {
+			return res.status(400).json({ error: "URL is required." })
+		}
+
+		let parsedUrl: URL
+		try {
+			parsedUrl = new URL(urlValue)
+		} catch {
+			return res.status(400).json({ error: "Invalid URL." })
+		}
+
+		if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+			return res.status(400).json({ error: "Only HTTP/HTTPS URLs are supported." })
+		}
+
+		const host = parsedUrl.hostname.toLowerCase()
+		let provider: "github" | "gdrive"
+		let downloadUrl = urlValue
+		let fileNameFallback = ""
+
+		if (host === "github.com" || host === "raw.githubusercontent.com") {
+			provider = "github"
+			const githubRawUrl = getGithubRawUrl(parsedUrl)
+			if (!githubRawUrl) {
+				return res.status(400).json({
+					error: "Provide a direct GitHub file URL (raw URL or blob URL).",
+				})
+			}
+			downloadUrl = githubRawUrl
+			fileNameFallback = getFileNameFromPath(new URL(githubRawUrl).pathname)
+		} else if (host.endsWith("drive.google.com") || host === "docs.google.com") {
+			provider = "gdrive"
+			const driveFileId = extractDriveFileId(urlValue)
+			if (!driveFileId) {
+				return res.status(400).json({
+					error: "Unable to read Google Drive file ID from URL.",
+				})
+			}
+			downloadUrl = `https://drive.google.com/uc?export=download&id=${driveFileId}`
+			fileNameFallback = `drive-file-${driveFileId}`
+		} else {
+			return res.status(400).json({
+				error: "Only GitHub and Google Drive URLs are supported.",
+			})
+		}
+
+		const requestHeaders: Record<string, string> = {}
+		const githubToken = (process.env.GITHUB_TOKEN || "").trim()
+		if (provider === "github" && githubToken) {
+			requestHeaders.Authorization = `Bearer ${githubToken}`
+		}
+
+		const downloadResponse = await fetch(downloadUrl, {
+			method: "GET",
+			headers: requestHeaders,
+			redirect: "follow",
+		})
+
+		if (!downloadResponse.ok) {
+			return res.status(downloadResponse.status).json({
+				error: `Failed to fetch external file (${downloadResponse.status}).`,
+			})
+		}
+
+		const arrayBuffer = await downloadResponse.arrayBuffer()
+		const buffer = Buffer.from(arrayBuffer)
+
+		if (buffer.length === 0) {
+			return res.status(400).json({ error: "Downloaded file is empty." })
+		}
+
+		if (buffer.length > maxExternalImportSizeBytes) {
+			return res.status(413).json({
+				error: `File is too large. Maximum allowed size is ${maxExternalImportSizeMb}MB.`,
+			})
+		}
+
+		const contentTypeHeader =
+			downloadResponse.headers.get("content-type") || "application/octet-stream"
+		const mimeType = contentTypeHeader.split(";")[0].trim() || "application/octet-stream"
+		const fileNameFromHeader = parseFileNameFromContentDisposition(
+			downloadResponse.headers.get("content-disposition"),
+		)
+		const resolvedFileName = sanitizeImportedFileName(
+			fileNameFromHeader || fileNameFallback || `imported-file-${Date.now()}`,
+		)
+		const isLikelyText = isLikelyTextFile(mimeType, buffer)
+
+		return res.json({
+			provider,
+			fileName: resolvedFileName,
+			mimeType,
+			size: buffer.length,
+			isLikelyText,
+			textContent: isLikelyText ? buffer.toString("utf8") : "",
+			base64Content: isLikelyText ? null : buffer.toString("base64"),
+		})
+	} catch (error) {
+		console.error("External import error:", error)
+		return res.status(500).json({
+			error: `Failed to import external file: ${(error as Error).message}`,
+		})
 	}
 })
 

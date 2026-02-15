@@ -135,7 +135,7 @@ const FormComponent = () => {
 
     return (
         <div className="w-full">
-            <div className="relative flex w-full max-w-[520px] flex-col gap-8 rounded-3xl border border-gray-700 bg-gray-800/80 p-8 shadow-[0_40px_120px_-60px_rgba(0,0,0,0.9)] backdrop-blur-xl sm:mx-auto">
+            <div className="relative flex w-full max-w-[520px] flex-col gap-6 rounded-3xl border border-gray-700 bg-gray-800/80 p-5 shadow-[0_40px_120px_-60px_rgba(0,0,0,0.9)] backdrop-blur-xl sm:mx-auto sm:gap-8 sm:p-8">
                 <div className="flex flex-col items-center gap-4 text-center">
                     <span className="rounded-full border border-teal-400/50 bg-teal-500/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.4em] text-teal-400/80">
                         Welcome to CodeCoalition
@@ -187,7 +187,7 @@ const FormComponent = () => {
                     <button
                         type="submit"
                         disabled={status === USER_STATUS.ATTEMPTING_JOIN}
-                        className="mt-2 inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-teal-500 to-teal-400 px-8 py-3 text-lg font-semibold text-gray-900 transition-transform hover:scale-105 hover:shadow-[0_20px_45px_-20px_rgba(13,148,136,0.8)] active:scale-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
+                        className="mt-2 inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-teal-500 to-teal-400 px-8 py-3 text-base font-semibold text-gray-900 transition-transform hover:scale-105 hover:shadow-[0_20px_45px_-20px_rgba(13,148,136,0.8)] active:scale-100 sm:text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
                     >
                         {status === USER_STATUS.ATTEMPTING_JOIN ? "Joining..." : "Join room"}
                     </button>

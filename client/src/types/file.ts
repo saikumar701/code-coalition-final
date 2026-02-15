@@ -1,6 +1,7 @@
 type Id = string
 type FileName = string
 type FileContent = string
+type FileContentEncoding = "utf8" | "base64"
 
 interface FileSystemItem {
     id: string
@@ -8,7 +9,14 @@ interface FileSystemItem {
     type: "file" | "directory"
     children?: FileSystemItem[]
     content?: FileContent
+    contentEncoding?: FileContentEncoding
+    mimeType?: string
     isOpen?: boolean
+}
+
+interface ImportFileOptions {
+    contentEncoding?: FileContentEncoding
+    mimeType?: string
 }
 
 interface FileContext {
@@ -34,8 +42,9 @@ interface FileContext {
         fileName: string,
         fileContent: string,
         sendToSocket?: boolean,
+        options?: ImportFileOptions,
     ) => Id | null,
     importZip: (file: File, parentId?: string) => Promise<void>
 }
 
-export { FileSystemItem, FileContent, FileContext, Id, FileName }
+export { FileSystemItem, FileContent, FileContext, Id, FileName, FileContentEncoding, ImportFileOptions }

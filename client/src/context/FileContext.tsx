@@ -2,6 +2,7 @@ import {
     FileContext as FileContextType,
     FileName,
     FileSystemItem,
+    ImportFileOptions,
     Id,
 } from "@/types/file"
 import { SocketEvent } from "@/types/socket"
@@ -296,7 +297,14 @@ function FileContextProvider({ children }: { children: ReactNode }) {
                     name = `${baseName}(${num}).${ext}`
                     num++
                 }
-                newFile = { id: uuidv4(), name, type: "file", content: "" }
+                newFile = {
+                    id: uuidv4(),
+                    name,
+                    type: "file",
+                    content: "",
+                    contentEncoding: "utf8",
+                    mimeType: "text/plain",
+                }
             } else {
                 newFile = file
             }
@@ -328,12 +336,15 @@ function FileContextProvider({ children }: { children: ReactNode }) {
             fileName: string,
             fileContent: string,
             sendToSocket = false,
+            options?: ImportFileOptions,
         ): Id | null => {
             const newFile: FileSystemItem = {
                 id: uuidv4(),
                 name: fileName,
                 type: "file",
                 content: fileContent,
+                contentEncoding: options?.contentEncoding || "utf8",
+                mimeType: options?.mimeType || "text/plain",
             }
 
             setFileStructure(prev =>
@@ -407,13 +418,17 @@ function FileContextProvider({ children }: { children: ReactNode }) {
             setFileStructure(prev =>
                 traverseAndUpdate(prev, item =>
                     item.type === "file" && item.id === fileId
-                        ? { ...item, content: newContent }
+                        ? { ...item, content: newContent, contentEncoding: "utf8" }
                         : item
                 ) as FileSystemItem
             )
 
             setOpenFiles(prev =>
-                prev.map(file => (file.id === fileId ? { ...file, content: newContent } : file))
+                prev.map(file =>
+                    file.id === fileId
+                        ? { ...file, content: newContent, contentEncoding: "utf8" }
+                        : file,
+                )
             )
         },
         [traverseAndUpdate]

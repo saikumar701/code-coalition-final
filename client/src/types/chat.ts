@@ -3,6 +3,9 @@ interface ChatMessage {
     message: string
     username: string
     timestamp: string
+    isDirect: boolean
+    recipientSocketId: string | null
+    recipientUsername: string | null
 }
 
 interface ChatContext {

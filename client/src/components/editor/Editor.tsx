@@ -19,6 +19,9 @@ import { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import toast from "react-hot-toast"
 import { collaborativeHighlighting, updateRemoteUsers } from "@/extensions/collaborativeHighlighting"
 
+const textMimePattern =
+    /^(text\/|application\/(json|javascript|typescript|xml|x-www-form-urlencoded)|image\/svg\+xml)/i
+
 function Editor() {
     const { users, currentUser } = useAppContext()
     const { activeFile, setActiveFile } = useFileSystem()
@@ -41,7 +44,7 @@ function Editor() {
     const onCodeChange = (code: string) => {
         if (!activeFile) return
 
-        const file: FileSystemItem = { ...activeFile, content: code }
+        const file: FileSystemItem = { ...activeFile, content: code, contentEncoding: "utf8" }
         setActiveFile(file)
 
         // Get cursor position and selection range
@@ -184,6 +187,86 @@ function Editor() {
             })
         }
     }, [filteredUsers])
+
+    const mimeType = activeFile?.mimeType || ""
+    const isBinaryFile = Boolean(
+        activeFile?.type === "file" &&
+            (activeFile?.contentEncoding === "base64" ||
+                (mimeType && !textMimePattern.test(mimeType))),
+    )
+    const binaryDataUrl = useMemo(() => {
+        if (!activeFile || !isBinaryFile) return ""
+        const normalizedMimeType = activeFile.mimeType || "application/octet-stream"
+        return `data:${normalizedMimeType};base64,${activeFile.content || ""}`
+    }, [activeFile, isBinaryFile])
+
+    const openBinaryFile = () => {
+        if (!binaryDataUrl) return
+        window.open(binaryDataUrl, "_blank", "noopener,noreferrer")
+    }
+
+    const downloadBinaryFile = () => {
+        if (!binaryDataUrl || !activeFile) return
+        const anchor = document.createElement("a")
+        anchor.href = binaryDataUrl
+        anchor.download = activeFile.name
+        document.body.append(anchor)
+        anchor.click()
+        anchor.remove()
+    }
+
+    if (activeFile && isBinaryFile) {
+        const isPdf = mimeType === "application/pdf"
+        const isImage = mimeType.startsWith("image/")
+
+        return (
+            <div
+                className="flex h-full w-full flex-col gap-3 overflow-auto bg-[#1E1E1E] p-3 text-gray-200"
+                style={{ height: viewHeight }}
+            >
+                <div className="rounded-md border border-gray-700 bg-gray-800/50 p-3">
+                    <p className="text-sm font-medium">Binary file preview</p>
+                    <p className="mt-1 text-xs text-gray-400">
+                        {activeFile.name} ({mimeType || "application/octet-stream"})
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                        <button
+                            type="button"
+                            className="rounded-md bg-white px-3 py-2 text-sm font-medium text-black"
+                            onClick={openBinaryFile}
+                        >
+                            Open in new tab
+                        </button>
+                        <button
+                            type="button"
+                            className="rounded-md border border-gray-600 px-3 py-2 text-sm"
+                            onClick={downloadBinaryFile}
+                        >
+                            Download
+                        </button>
+                    </div>
+                </div>
+
+                {(isPdf || isImage) && binaryDataUrl && (
+                    <div className="min-h-0 flex-1 rounded-md border border-gray-700 bg-black/40 p-2">
+                        {isPdf ? (
+                            <iframe
+                                title={activeFile.name}
+                                src={binaryDataUrl}
+                                className="h-full min-h-[420px] w-full rounded border-0"
+                            />
+                        ) : (
+                            <img
+                                src={binaryDataUrl}
+                                alt={activeFile.name}
+                                className="h-full max-h-[70vh] w-full object-contain"
+                            />
+                        )}
+                    </div>
+                )}
+            </div>
+        )
+    }
 
     return (
         <CodeMirror

@@ -44,11 +44,11 @@ function ReachEditor() {
     )
 
     useEffect(() => {
-        // Load the drawing data from the context
+        // Apply initial/remote snapshot whenever drawingData is updated.
         if (drawingData && Object.keys(drawingData).length > 0) {
             editor.loadSnapshot(drawingData as any)
         }
-    }, [])
+    }, [drawingData, editor])
 
     useEffect(() => {
         const cleanupFunction = editor.store.listen(handleChangeEvent, {

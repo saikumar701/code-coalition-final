@@ -38,14 +38,37 @@ function FileStructureView() {
 
     const resolveSelectedDirectoryId = () => selectedDirId || fileStructure.id
 
-    const readFileContent = (file: File): Promise<string> => {
+    const readFileContent = (
+        file: File,
+    ): Promise<{ content: string; contentEncoding: "utf8" | "base64"; mimeType: string }> => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader()
-            reader.onload = (event) => {
-                resolve((event.target?.result as string) || "")
+            const isLikelyText = file.type.startsWith("text/") || /(json|javascript|typescript|xml|csv|yaml|yml|svg)/i.test(file.type)
+
+            reader.onload = () => {
+                if (isLikelyText) {
+                    resolve({
+                        content: (reader.result as string) || "",
+                        contentEncoding: "utf8",
+                        mimeType: file.type || "text/plain",
+                    })
+                    return
+                }
+
+                const dataUrl = String(reader.result || "")
+                const base64Content = dataUrl.includes(",") ? dataUrl.split(",")[1] : ""
+                resolve({
+                    content: base64Content,
+                    contentEncoding: "base64",
+                    mimeType: file.type || "application/octet-stream",
+                })
             }
             reader.onerror = reject
-            reader.readAsText(file)
+            if (isLikelyText) {
+                reader.readAsText(file)
+            } else {
+                reader.readAsDataURL(file)
+            }
         })
     }
 
@@ -108,8 +131,11 @@ function FileStructureView() {
         const targetDirectoryId = resolveSelectedDirectoryId()
         for (let index = 0; index < files.length; index += 1) {
             const file = files[index]
-            const content = await readFileContent(file)
-            importFile(targetDirectoryId, file.name, content)
+            const filePayload = await readFileContent(file)
+            importFile(targetDirectoryId, file.name, filePayload.content, false, {
+                contentEncoding: filePayload.contentEncoding,
+                mimeType: filePayload.mimeType,
+            })
         }
 
         event.target.value = ""
@@ -124,7 +150,7 @@ function FileStructureView() {
 
         for (let index = 0; index < files.length; index += 1) {
             const file = files[index]
-            const content = await readFileContent(file)
+            const filePayload = await readFileContent(file)
             const relativePath = (file.webkitRelativePath || file.name)
                 .split("/")
                 .filter(Boolean)
@@ -147,7 +173,10 @@ function FileStructureView() {
                 )
             }
 
-            importFile(currentParentId, fileName, content)
+            importFile(currentParentId, fileName, filePayload.content, false, {
+                contentEncoding: filePayload.contentEncoding,
+                mimeType: filePayload.mimeType,
+            })
         }
 
         event.target.value = ""
@@ -168,8 +197,11 @@ function FileStructureView() {
     const processEntry = async (entry: any, parentId: string): Promise<void> => {
         if (entry.isFile) {
             const file = await new Promise<File>((resolve) => entry.file(resolve))
-            const text = await file.text()
-            importFile(parentId, file.name, text)
+            const filePayload = await readFileContent(file)
+            importFile(parentId, file.name, filePayload.content, false, {
+                contentEncoding: filePayload.contentEncoding,
+                mimeType: filePayload.mimeType,
+            })
             return
         }
 

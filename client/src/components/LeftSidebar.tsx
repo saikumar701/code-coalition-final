@@ -5,6 +5,8 @@ import {
     Users,
     Settings,
     Share2,
+    Link2,
+    Monitor,
 } from "lucide-react"
 import { useChatRoom } from "@/context/ChatContext"
 import { useFileShare } from "@/context/FileShareContext"
@@ -22,6 +24,8 @@ const LeftSidebar = ({ onSelect, activeItem }: LeftSidebarProps) => {
         { icon: <Folder />, name: "files", title: "File Explorer" },
         { icon: <MessageCircle />, name: "chat", title: "Chat" },
         { icon: <Share2 />, name: "file-sharing", title: "File Sharing" },
+        { icon: <Link2 />, name: "external-import", title: "External Import" },
+        { icon: <Monitor />, name: "screen-share", title: "Screen Share" },
         { icon: <Bot />, name: "copilot", title: "Copilot" },
         { icon: <Users />, name: "clients", title: "Clients" },
         { icon: <Settings />, name: "settings", title: "Settings" },

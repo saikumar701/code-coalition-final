@@ -9,10 +9,10 @@ function HomePage() {
     const [openMenu, setOpenMenu] = useState<MenuType>(null)
 
     return (
-        <div className="relative h-screen overflow-hidden bg-gray-950 text-gray-100">
+        <div className="relative min-h-[100dvh] overflow-x-hidden bg-gray-950 text-gray-100">
             {/* NAVBAR */}
             <nav className="relative z-50 border-b border-gray-800">
-                <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
+                <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
                     <h1 className="text-lg font-semibold tracking-wide">
                         Code-Coalition
                     </h1>
@@ -71,19 +71,19 @@ function HomePage() {
             </nav>
 
             {/* MAIN CONTENT */}
-            <main className="mx-auto grid h-[calc(100vh-56px)] max-w-7xl grid-cols-1 gap-10 px-6 py-10 lg:grid-cols-2">
-                <section className="flex flex-col justify-center space-y-6">
+            <main className="mx-auto grid min-h-[calc(100dvh-56px)] w-full max-w-7xl grid-cols-1 items-start gap-8 px-4 pb-24 pt-6 sm:px-6 sm:pb-28 sm:pt-10 md:grid-cols-2 md:items-center md:gap-10">
+                <section className="flex flex-col justify-center space-y-5 sm:space-y-6">
                     <span className="w-fit rounded-md bg-teal-500/10 px-3 py-1 text-xs font-medium text-teal-400">
                         Real-time Collaboration
                     </span>
 
-                    <h2 className="text-3xl font-semibold leading-tight">
+                    <h2 className="text-2xl font-semibold leading-tight sm:text-3xl">
                         A focused workspace for
                         <br />
                         collaborative coding
                     </h2>
 
-                    <p className="max-w-xl text-sm leading-relaxed text-gray-400">
+                    <p className="max-w-xl text-sm leading-relaxed text-gray-400 sm:text-base">
                         Create secure rooms, collaborate in real time, and work together
                         without configuration overhead.
                     </p>
@@ -91,11 +91,11 @@ function HomePage() {
                     <img
                         src={illustration}
                         alt="Collaboration"
-                        className="filter-none"
+                        className="w-full max-w-xl self-center filter-none md:self-start"
                     />
                 </section>
 
-                <section className="flex items-center justify-center">
+                <section className="flex items-center justify-center md:justify-end">
                     <div className="w-full max-w-md">
                         <div className="w-full rounded-xl border border-gray-800 bg-gray-900 p-5 shadow-lg">
                             <FormComponent />
@@ -104,7 +104,7 @@ function HomePage() {
                 </section>
             </main>
 
-            <div className="homepage-train-track" aria-hidden="true">
+            <div className="homepage-train-track hidden sm:block" aria-hidden="true">
                 <img src={trainCatGif} alt="" className="homepage-train-cat" />
             </div>
         </div>

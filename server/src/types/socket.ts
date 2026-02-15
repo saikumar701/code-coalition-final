@@ -37,6 +37,13 @@ enum SocketEvent {
 	TERMINAL_RESIZE = "terminal-resize",
 	TERMINAL_RESET = "terminal-reset",
 	WORKSPACE_SYNC = "workspace-sync",
+	SCREEN_SHARE_START = "screen-share-start",
+	SCREEN_SHARE_STOP = "screen-share-stop",
+	SCREEN_SHARE_STARTED = "screen-share-started",
+	SCREEN_SHARE_STOPPED = "screen-share-stopped",
+	SCREEN_SHARE_SIGNAL = "screen-share-signal",
+	SCREEN_SHARE_STATUS = "screen-share-status",
+	SCREEN_SHARE_STATUS_REQUEST = "screen-share-status-request",
 }
 
 interface SocketContext {

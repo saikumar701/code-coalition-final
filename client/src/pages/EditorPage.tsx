@@ -5,7 +5,9 @@ import LeftSidebar from "../components/LeftSidebar"
 import FileStructureView from "../components/files/FileStructureView"
 import ChatsView from "../components/sidebar/sidebar-views/ChatsView"
 import FileSharingView from "../components/sidebar/sidebar-views/FileSharingView"
+import ExternalImportView from "../components/sidebar/sidebar-views/ExternalImportView"
 import CopilotView from "../components/sidebar/sidebar-views/CopilotView"
+import ScreenShareView from "../components/sidebar/sidebar-views/ScreenShareView"
 import SettingsView from "../components/sidebar/sidebar-views/SettingsView"
 import UsersView from "../components/sidebar/sidebar-views/UsersView"
 import TerminalView from "../components/terminal-view"
@@ -185,6 +187,10 @@ const EditorPage = () => {
                 return <ChatsView />
             case "file-sharing":
                 return <FileSharingView />
+            case "external-import":
+                return <ExternalImportView />
+            case "screen-share":
+                return <ScreenShareView />
             case "copilot":
                 return <CopilotView />
             case "clients":
