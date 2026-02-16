@@ -81,13 +81,13 @@ function NodeContextMenu({
     }
 
     const menuItemClassName =
-        "w-full px-3 py-1.5 text-left text-sm text-gray-200 hover:bg-[#3c3c3c] transition-colors"
+        "w-full px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-cyan-400/15"
 
     return (
         <div
             ref={menuRef}
             style={{ top: y, left: x }}
-            className="fixed z-[1200] min-w-[190px] rounded-md border border-gray-700 bg-[#252526] py-1 shadow-lg"
+            className="fixed z-[1200] min-w-[200px] rounded-xl border border-cyan-300/25 bg-[linear-gradient(145deg,rgba(15,23,42,0.96),rgba(2,6,23,0.96))] py-1 shadow-[0_16px_34px_rgba(2,6,23,0.5)]"
             onClick={(event) => event.stopPropagation()}
         >
             <button className={menuItemClassName} onClick={handleRename}>

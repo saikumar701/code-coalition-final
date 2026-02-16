@@ -53,6 +53,12 @@ SERVER_PUBLIC_URL=http://localhost:3000
 # Required for Copilot endpoint
 APIFREELLM_API_KEY=your_apifreellm_key
 
+# Required for Run button (self-hosted or authorized Piston endpoint)
+PISTON_API_BASE_URL=http://localhost:2000/api/v2/piston
+
+# Optional: token for protected Piston instances
+PISTON_API_TOKEN=
+
 # Required for Google Drive OAuth import
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
@@ -144,6 +150,9 @@ Before testing buttons in UI, verify these URLs in browser:
 If configured correctly, each returns JSON with `authorizeUrl`.
 
 ## 8. Common issues
+
+1. `Request failed with status code 401` when clicking Run
+The public `https://emkc.org/api/v2/piston` execute endpoint became whitelist-only on February 15, 2026. Point `PISTON_API_BASE_URL` to your own Piston instance (or an authorized endpoint), then restart backend and frontend.
 
 1. `GOOGLE_CLIENT_ID is not configured on the server`  
 `server/.env` missing keys, or backend not restarted.

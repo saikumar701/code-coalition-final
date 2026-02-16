@@ -321,29 +321,33 @@ const ExternalImportView = () => {
 
     const isDriveLoggedIn = Boolean(oauthTokens.gdrive)
     const isGithubLoggedIn = Boolean(oauthTokens.github)
+    const modeButtonClass = (isActive: boolean) =>
+        `flex-1 rounded-xl px-3 py-2 text-sm font-medium transition-all ${
+            isActive
+                ? "sidebar-modern-btn sidebar-modern-btn--primary"
+                : "sidebar-modern-btn"
+        }`
 
     return (
         <div
-            className="flex max-h-full min-h-[400px] w-full flex-col gap-3 p-4 text-white"
+            className="sidebar-modern-view flex max-h-full min-h-[400px] w-full flex-col gap-3 p-4"
             style={{ height: viewHeight }}
         >
-            <h1 className="view-title">External Import</h1>
+            <div className="sidebar-modern-header">
+                <h1 className="view-title m-0 border-none pb-0">External Import</h1>
+            </div>
 
-            <div className="flex rounded-md border border-gray-700 bg-gray-900/50 p-1">
+            <div className="sidebar-modern-card flex p-1">
                 <button
                     type="button"
-                    className={`flex-1 rounded px-3 py-2 text-sm ${
-                        activeMode === "link" ? "bg-white text-black" : "text-gray-300"
-                    }`}
+                    className={modeButtonClass(activeMode === "link")}
                     onClick={() => setActiveMode("link")}
                 >
                     Import via link
                 </button>
                 <button
                     type="button"
-                    className={`flex-1 rounded px-3 py-2 text-sm ${
-                        activeMode === "account" ? "bg-white text-black" : "text-gray-300"
-                    }`}
+                    className={modeButtonClass(activeMode === "account")}
                     onClick={() => setActiveMode("account")}
                 >
                     Import from account
@@ -351,19 +355,19 @@ const ExternalImportView = () => {
             </div>
 
             {activeMode === "link" && (
-                <div className="rounded-md border border-gray-700 bg-gray-900/50 p-3">
-                    <label className="mb-2 block text-xs text-gray-400">
+                <div className="sidebar-modern-card">
+                    <label className="ui-muted-text mb-2 block text-xs">
                         Keep using direct links from GitHub or Google Drive
                     </label>
                     <textarea
                         value={externalUrl}
                         onChange={(event) => setExternalUrl(event.target.value)}
-                        className="h-24 w-full resize-none rounded-md border border-gray-700 bg-gray-800 p-2 text-sm outline-none focus:border-gray-500"
+                        className="sidebar-modern-control h-24 resize-none p-2 text-sm"
                         placeholder="Paste external file URL..."
                     />
                     <button
                         type="button"
-                        className="mt-3 w-full rounded-md bg-white p-2 text-sm font-medium text-black disabled:cursor-not-allowed disabled:opacity-50"
+                        className="sidebar-modern-btn sidebar-modern-btn--primary mt-3 w-full"
                         onClick={handleLinkImport}
                         disabled={isImporting}
                     >
@@ -373,14 +377,14 @@ const ExternalImportView = () => {
             )}
 
             {activeMode === "account" && (
-                <div className="min-h-0 flex-1 overflow-auto rounded-md border border-gray-700 bg-gray-900/50 p-3">
+                <div className="sidebar-modern-scroll min-h-0 flex-1 overflow-auto p-3">
                     <div className="grid grid-cols-2 gap-2">
                         <button
                             type="button"
-                            className={`flex items-center justify-center gap-2 rounded-md border p-2 text-sm ${
+                            className={`flex items-center justify-center gap-2 ${
                                 activeAccountProvider === "gdrive"
-                                    ? "border-white bg-white text-black"
-                                    : "border-gray-600 text-gray-300"
+                                    ? "sidebar-modern-btn sidebar-modern-btn--primary"
+                                    : "sidebar-modern-btn"
                             }`}
                             onClick={() => setActiveAccountProvider("gdrive")}
                         >
@@ -389,10 +393,10 @@ const ExternalImportView = () => {
                         </button>
                         <button
                             type="button"
-                            className={`flex items-center justify-center gap-2 rounded-md border p-2 text-sm ${
+                            className={`flex items-center justify-center gap-2 ${
                                 activeAccountProvider === "github"
-                                    ? "border-white bg-white text-black"
-                                    : "border-gray-600 text-gray-300"
+                                    ? "sidebar-modern-btn sidebar-modern-btn--primary"
+                                    : "sidebar-modern-btn"
                             }`}
                             onClick={() => setActiveAccountProvider("github")}
                         >
@@ -406,7 +410,7 @@ const ExternalImportView = () => {
                             {!isDriveLoggedIn ? (
                                 <button
                                     type="button"
-                                    className="flex w-full items-center justify-center gap-2 rounded-md bg-white p-2 text-sm font-medium text-black"
+                                    className="sidebar-modern-btn sidebar-modern-btn--primary flex w-full items-center justify-center gap-2"
                                     onClick={() => startProviderLogin("gdrive")}
                                 >
                                     <SiGoogledrive />
@@ -416,7 +420,7 @@ const ExternalImportView = () => {
                                 <div className="space-y-2">
                                     <button
                                         type="button"
-                                        className="w-full rounded-md border border-gray-600 p-2 text-sm"
+                                        className="sidebar-modern-btn w-full"
                                         onClick={() => {
                                             const token = oauthTokens.gdrive
                                             if (token) {
@@ -427,26 +431,26 @@ const ExternalImportView = () => {
                                     >
                                         {isLoadingDriveFiles ? "Refreshing..." : "Refresh files"}
                                     </button>
-                                    <div className="max-h-80 overflow-auto rounded-md border border-gray-700">
+                                    <div className="max-h-80 overflow-auto rounded-xl border border-slate-500/30 bg-slate-900/60">
                                         {driveFiles.length === 0 ? (
-                                            <p className="p-3 text-sm text-gray-400">
+                                            <p className="ui-muted-text p-3 text-sm">
                                                 No files found in Google Drive.
                                             </p>
                                         ) : (
                                             driveFiles.map((file) => (
                                                 <div
                                                     key={file.id}
-                                                    className="flex items-center justify-between border-b border-gray-800 p-2 text-sm last:border-b-0"
+                                                    className="flex items-center justify-between border-b border-slate-700/70 p-2 text-sm last:border-b-0"
                                                 >
                                                     <div className="min-w-0">
                                                         <p className="truncate">{file.name}</p>
-                                                        <p className="text-xs text-gray-500">
+                                                        <p className="ui-muted-text text-xs">
                                                             {file.mimeType}
                                                         </p>
                                                     </div>
                                                     <button
                                                         type="button"
-                                                        className="rounded border border-gray-600 px-2 py-1 text-xs"
+                                                        className="sidebar-modern-btn px-2 py-1 text-xs"
                                                         onClick={() => {
                                                             void handleImportDriveFile(file)
                                                         }}
@@ -468,7 +472,7 @@ const ExternalImportView = () => {
                             {!isGithubLoggedIn ? (
                                 <button
                                     type="button"
-                                    className="flex w-full items-center justify-center gap-2 rounded-md bg-white p-2 text-sm font-medium text-black"
+                                    className="sidebar-modern-btn sidebar-modern-btn--primary flex w-full items-center justify-center gap-2"
                                     onClick={() => startProviderLogin("github")}
                                 >
                                     <SiGithub />
@@ -486,7 +490,7 @@ const ExternalImportView = () => {
                                                 setSelectedGithubRepo(nextRepo)
                                             }
                                         }}
-                                        className="w-full rounded-md border border-gray-700 bg-gray-800 p-2 text-sm"
+                                        className="sidebar-modern-control p-2 text-sm"
                                         disabled={isLoadingGithubRepos || githubRepos.length === 0}
                                     >
                                         {githubRepos.map((repo) => (
@@ -496,10 +500,10 @@ const ExternalImportView = () => {
                                         ))}
                                     </select>
 
-                                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                                    <div className="ui-muted-text flex items-center gap-2 text-xs">
                                         <button
                                             type="button"
-                                            className="rounded border border-gray-600 px-2 py-1"
+                                            className="sidebar-modern-btn px-2 py-1 text-xs"
                                             onClick={navigateGithubBack}
                                             disabled={!githubPath}
                                         >
@@ -510,13 +514,13 @@ const ExternalImportView = () => {
                                         </span>
                                     </div>
 
-                                    <div className="max-h-80 overflow-auto rounded-md border border-gray-700">
+                                    <div className="max-h-80 overflow-auto rounded-xl border border-slate-500/30 bg-slate-900/60">
                                         {isLoadingGithubEntries ? (
-                                            <p className="p-3 text-sm text-gray-400">
+                                            <p className="ui-muted-text p-3 text-sm">
                                                 Loading repository files...
                                             </p>
                                         ) : githubEntries.length === 0 ? (
-                                            <p className="p-3 text-sm text-gray-400">
+                                            <p className="ui-muted-text p-3 text-sm">
                                                 No entries found in this folder.
                                             </p>
                                         ) : (
@@ -524,7 +528,7 @@ const ExternalImportView = () => {
                                                 <button
                                                     type="button"
                                                     key={entry.path}
-                                                    className="flex w-full items-center justify-between border-b border-gray-800 p-2 text-left text-sm hover:bg-gray-800/60 last:border-b-0"
+                                                    className="flex w-full items-center justify-between border-b border-slate-700/70 p-2 text-left text-sm transition-colors hover:bg-cyan-500/10 last:border-b-0"
                                                     onClick={() => handleGithubEntryClick(entry)}
                                                     disabled={isImporting}
                                                 >
@@ -532,7 +536,7 @@ const ExternalImportView = () => {
                                                         {entry.type === "dir" ? "[DIR]" : "[FILE]"}{" "}
                                                         {entry.name}
                                                     </span>
-                                                    <span className="text-xs text-gray-500">
+                                                    <span className="ui-muted-text text-xs">
                                                         {entry.type === "dir"
                                                             ? "Open"
                                                             : "Import"}
@@ -548,7 +552,7 @@ const ExternalImportView = () => {
                 </div>
             )}
 
-            <div className="rounded-md border border-gray-700 bg-gray-900/40 p-3 text-xs text-gray-400">
+            <div className="sidebar-modern-card ui-muted-text text-xs">
                 Imported files are added to the Explorer root and synchronized to all users in the room.
                 {lastImportedName && <div className="mt-1">Last imported: {lastImportedName}</div>}
             </div>

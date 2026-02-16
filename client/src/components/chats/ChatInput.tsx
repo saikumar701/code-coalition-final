@@ -81,14 +81,14 @@ function ChatInput() {
     }
 
     return (
-        <form onSubmit={handleSendMessage} className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 rounded-md border border-primary bg-dark px-2 py-1">
-                <label htmlFor="chat-recipient" className="text-xs text-gray-300">
+        <form onSubmit={handleSendMessage} className="flex flex-col gap-3">
+            <div className="sidebar-modern-card flex items-center gap-2 px-3 py-2">
+                <label htmlFor="chat-recipient" className="ui-muted-text text-xs font-medium">
                     Send to
                 </label>
                 <select
                     id="chat-recipient"
-                    className="w-full rounded-md bg-darkHover px-2 py-1 text-sm outline-none"
+                    className="sidebar-modern-control px-3 py-1.5 text-sm"
                     value={recipientSocketId}
                     onChange={handleRecipientChange}
                 >
@@ -100,10 +100,10 @@ function ChatInput() {
                     ))}
                 </select>
             </div>
-            <div className="flex justify-between rounded-md border border-primary">
+            <div className="sidebar-modern-card flex justify-between overflow-hidden p-0">
                 <input
                     type="text"
-                    className="w-full flex-grow rounded-md border-none bg-dark p-2 outline-none"
+                    className="w-full flex-grow rounded-l-2xl border-none bg-transparent px-3 py-2.5 text-sm text-[var(--ui-text-primary)] outline-none placeholder:text-[var(--ui-text-muted)]"
                     placeholder={
                         selectedRecipient
                             ? `Message to ${selectedRecipient.username}...`
@@ -112,7 +112,7 @@ function ChatInput() {
                     ref={inputRef}
                 />
                 <button
-                    className="flex items-center justify-center rounded-r-md bg-primary p-2 text-black"
+                    className="sidebar-modern-btn sidebar-modern-btn--primary rounded-none rounded-r-2xl border-l px-4"
                     type="submit"
                 >
                     <LuSendHorizonal size={24} />

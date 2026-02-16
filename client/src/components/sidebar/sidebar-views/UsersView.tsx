@@ -50,15 +50,19 @@ function UsersView() {
 
 
     return (
-        <div className="flex flex-col p-4 bg-gray-900 text-white" style={{ height: viewHeight }}>
-            <h1 className="view-title">Users</h1>
+        <div className="sidebar-modern-view flex flex-col p-4" style={{ height: viewHeight }}>
+            <div className="sidebar-modern-header">
+                <h1 className="view-title m-0 border-none pb-0">Active Users</h1>
+            </div>
             {/* List of connected users */}
-            <Users />
+            <div className="sidebar-modern-scroll min-h-0 flex-1 p-2">
+                <Users />
+            </div>
             <div className="flex flex-col items-center gap-4 pt-4">
                 <div className="flex w-full gap-4">
                     {/* Share URL button */}
                     <button
-                        className="flex flex-grow items-center justify-center rounded-md bg-white p-3 text-black"
+                        className="sidebar-modern-btn sidebar-modern-btn--primary flex flex-grow p-3"
                         onClick={shareURL}
                         title="Share Link"
                     >
@@ -66,7 +70,7 @@ function UsersView() {
                     </button>
                     {/* Copy URL button */}
                     <button
-                        className="flex flex-grow items-center justify-center rounded-md bg-white p-3 text-black"
+                        className="sidebar-modern-btn sidebar-modern-btn--primary flex flex-grow p-3"
                         onClick={copyURL}
                         title="Copy Link"
                     >
@@ -74,7 +78,7 @@ function UsersView() {
                     </button>
                     {/* Leave room button */}
                     <button
-                        className="flex flex-grow items-center justify-center rounded-md bg-primary p-3 text-black"
+                        className="sidebar-modern-btn sidebar-modern-btn--danger flex flex-grow p-3"
                         onClick={leaveRoom}
                         title="Leave room"
                     >

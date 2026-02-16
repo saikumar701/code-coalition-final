@@ -16,9 +16,9 @@ const TerminalView = () => {
     ];
 
     return (
-        <div className="h-full flex flex-col bg-[#1E1E1E]">
+        <div className="terminal-shell flex h-full flex-col">
             {/* Tab Bar */}
-            <div className="flex items-center bg-[#252526] border-t border-gray-700 overflow-x-auto">
+            <div className="terminal-tabbar flex items-center border-t overflow-x-auto">
                 {tabs.map((tab) => (
                     <Tab
                         key={tab.id}
@@ -49,12 +49,12 @@ interface TabProps {
 const Tab: React.FC<TabProps> = ({ label, active, onClick, icon: Icon }) => (
     <div
         className={`
-            flex items-center gap-2 px-4 py-2 cursor-pointer text-xs font-medium
-            border-b-2 transition-all whitespace-nowrap
+            terminal-tab flex cursor-pointer items-center gap-2 whitespace-nowrap px-4 py-2 text-xs font-medium
+            transition-all
             ${
                 active
-                    ? "bg-[#1E1E1E] text-white border-blue-500"
-                    : "text-gray-400 border-transparent hover:text-gray-200 hover:bg-[#2D2D30]"
+                    ? "terminal-tab--active"
+                    : ""
             }
         `}
         onClick={onClick}

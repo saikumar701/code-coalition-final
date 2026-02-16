@@ -3,6 +3,7 @@ import { useSettings } from "@/context/SettingContext"
 import useResponsive from "@/hooks/useResponsive"
 import { editorFonts } from "@/resources/Fonts"
 import { editorThemes } from "@/resources/Themes"
+import { UIMode } from "@/types/setting"
 import { langNames } from "@uiw/codemirror-extensions-langs"
 import { ChangeEvent, useEffect } from "react"
 
@@ -18,6 +19,8 @@ function SettingsView() {
         setFontFamily,
         showGitHubCorner,
         setShowGitHubCorner,
+        uiMode,
+        setUiMode,
         resetSettings,
     } = useSettings()
     const { viewHeight } = useResponsive()
@@ -32,6 +35,7 @@ function SettingsView() {
         setFontSize(parseInt(e.target.value))
     const handleShowGitHubCornerChange = (e: ChangeEvent<HTMLInputElement>) =>
         setShowGitHubCorner(e.target.checked)
+    const handleUIModeChange = (mode: UIMode) => setUiMode(mode)
 
     useEffect(() => {
         // Set editor font family
@@ -45,12 +49,14 @@ function SettingsView() {
 
     return (
         <div
-            className="flex flex-col items-center gap-2 p-4"
+            className="sidebar-modern-view flex flex-col items-center gap-3 p-4"
             style={{ height: viewHeight }}
         >
-            <h1 className="view-title">Settings</h1>
+            <div className="sidebar-modern-header w-full">
+                <h1 className="view-title m-0 border-none pb-0">Settings</h1>
+            </div>
             {/* Choose Font Family option */}
-            <div className="flex w-full items-end gap-2">
+            <div className="sidebar-modern-card flex w-full items-end gap-2">
                 <Select
                     onChange={handleFontFamilyChange}
                     value={fontFamily}
@@ -61,7 +67,7 @@ function SettingsView() {
                 <select
                     value={fontSize}
                     onChange={handleFontSizeChange}
-                    className="rounded-md border-none bg-darkHover px-4 py-2 text-white outline-none"
+                    className="sidebar-modern-control px-4 py-2 text-sm"
                     title="Font Size"
                 >
                     {[...Array(13).keys()].map((size) => {
@@ -74,22 +80,51 @@ function SettingsView() {
                 </select>
             </div>
             {/* Choose theme option */}
-            <Select
-                onChange={handleThemeChange}
-                value={theme}
-                options={Object.keys(editorThemes)}
-                title="Theme"
-            />
+            <div className="sidebar-modern-card w-full">
+                <Select
+                    onChange={handleThemeChange}
+                    value={theme}
+                    options={Object.keys(editorThemes)}
+                    title="Theme"
+                />
+            </div>
             {/* Choose language option */}
-            <Select
-                onChange={handleLanguageChange}
-                value={language}
-                options={langNames}
-                title="Language"
-            />
+            <div className="sidebar-modern-card w-full">
+                <Select
+                    onChange={handleLanguageChange}
+                    value={language}
+                    options={langNames}
+                    title="Language"
+                />
+            </div>
+            <div className="sidebar-modern-card w-full">
+                <label className="ui-muted-text mb-2 block text-xs font-medium uppercase tracking-wide">
+                    App UI Mode
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                    <button
+                        type="button"
+                        className={`sidebar-modern-btn ${
+                            uiMode === "dark" ? "sidebar-modern-btn--primary" : ""
+                        }`}
+                        onClick={() => handleUIModeChange("dark")}
+                    >
+                        Dark
+                    </button>
+                    <button
+                        type="button"
+                        className={`sidebar-modern-btn ${
+                            uiMode === "light" ? "sidebar-modern-btn--primary" : ""
+                        }`}
+                        onClick={() => handleUIModeChange("light")}
+                    >
+                        Light
+                    </button>
+                </div>
+            </div>
             {/* Show GitHub corner option */}
-            <div className="mt-4 flex w-full items-center justify-between">
-                <label>Show github corner</label>
+            <div className="sidebar-modern-card mt-1 flex w-full items-center justify-between">
+                <label className="ui-muted-text text-sm">Show github corner</label>
                 <label className="relative inline-flex cursor-pointer items-center">
                     <input
                         className="peer sr-only"
@@ -97,11 +132,11 @@ function SettingsView() {
                         onChange={handleShowGitHubCornerChange}
                         checked={showGitHubCorner}
                     />
-                    <div className="peer h-6 w-12 rounded-full bg-darkHover outline-none duration-100 after:absolute after:left-1 after:top-1 after:flex after:h-4 after:w-4 after:items-center after:justify-center after:rounded-full after:bg-white after:font-bold after:outline-none after:duration-500 peer-checked:after:translate-x-6 peer-checked:after:border-white peer-focus:outline-none"></div>
+                    <div className="settings-toggle"></div>
                 </label>
             </div>
             <button
-                className="mt-auto w-full rounded-md border-none bg-darkHover px-4 py-2 text-white outline-none"
+                className="sidebar-modern-btn mt-auto w-full"
                 onClick={resetSettings}
             >
                 Reset to default

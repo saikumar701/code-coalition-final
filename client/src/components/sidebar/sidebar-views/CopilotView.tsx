@@ -77,17 +77,19 @@ function CopilotView() {
 
     return (
         <div
-            className="flex max-h-full min-h-[400px] w-full flex-col gap-2 p-4"
+            className="sidebar-modern-view flex max-h-full min-h-[400px] w-full flex-col gap-3 p-4"
             style={{ height: viewHeight }}
         >
-            <h1 className="view-title">Copilot</h1>
+            <div className="sidebar-modern-header">
+                <h1 className="view-title m-0 border-none pb-0">Copilot</h1>
+            </div>
             <textarea
-                className="min-h-[120px] w-full rounded-md border-none bg-darkHover p-2 text-white outline-none"
+                className="sidebar-modern-control min-h-[120px] p-2 text-sm"
                 placeholder="Ask anything: code, errors, concepts, or project questions..."
                 onChange={(e) => setInput(e.target.value)}
             />
             <button
-                className="mt-1 flex w-full justify-center rounded-md bg-white p-2 font-bold text-black outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                className="sidebar-modern-btn sidebar-modern-btn--primary mt-1 flex w-full justify-center"
                 onClick={generateCode}
                 disabled={isRunning}
             >
@@ -95,33 +97,35 @@ function CopilotView() {
             </button>
             {output && (
                 <div className="flex justify-end gap-4 pt-2">
-                    <button title="Copy Output" onClick={copyOutput}>
+                    <button className="sidebar-modern-btn h-9 w-9 p-0" title="Copy Output" onClick={copyOutput}>
                         <LuCopy
                             size={18}
-                            className="cursor-pointer text-white"
+                            className="cursor-pointer text-[var(--ui-text-primary)]"
                         />
                     </button>
                     <button
+                        className="sidebar-modern-btn h-9 w-9 p-0"
                         title="Replace code in file"
                         onClick={replaceCodeInFile}
                     >
                         <LuRepeat
                             size={18}
-                            className="cursor-pointer text-white"
+                            className="cursor-pointer text-[var(--ui-text-primary)]"
                         />
                     </button>
                     <button
+                        className="sidebar-modern-btn h-9 w-9 p-0"
                         title="Paste code in file"
                         onClick={pasteCodeInFile}
                     >
                         <LuClipboardPaste
                             size={18}
-                            className="cursor-pointer text-white"
+                            className="cursor-pointer text-[var(--ui-text-primary)]"
                         />
                     </button>
                 </div>
             )}
-            <div className="h-full rounded-lg w-full overflow-y-auto p-0">
+            <div className="sidebar-modern-scroll h-full w-full overflow-y-auto p-2">
                 <ReactMarkdown
                     components={{
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any

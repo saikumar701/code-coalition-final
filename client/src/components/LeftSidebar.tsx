@@ -32,22 +32,34 @@ const LeftSidebar = ({ onSelect, activeItem }: LeftSidebarProps) => {
     ]
 
     return (
-        <div className="flex flex-col items-center gap-4 p-2 bg-gray-800 border-r border-gray-700">
+        <div className="workspace-leftbar flex h-full flex-col items-center gap-3 p-3 backdrop-blur-xl">
             {sidebarItems.map(item => (
                 <div key={item.name} className="relative">
                     <Button
-                        variant={activeItem === item.name ? "secondary" : "ghost"}
+                        variant="ghost"
                         size="icon"
                         onClick={() => onSelect(item.name)}
                         title={item.title}
+                        className={`workspace-leftbar-btn group relative h-11 w-11 rounded-2xl transition-all duration-300 ${
+                            activeItem === item.name
+                                ? "workspace-leftbar-btn--active"
+                                : "hover:-translate-y-0.5"
+                        }`}
                     >
-                        {item.icon}
+                        <span className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-white/20 via-transparent to-transparent opacity-70" />
+                        <span className="relative z-10">{item.icon}</span>
                     </Button>
                     {item.name === "chat" && isNewMessage && (
-                        <span className="absolute right-0 top-0 h-2.5 w-2.5 rounded-full bg-primary" />
+                        <span className="absolute -right-1 -top-1 flex h-3 w-3">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-300 opacity-75" />
+                            <span className="relative inline-flex h-3 w-3 rounded-full border border-white/50 bg-cyan-200" />
+                        </span>
                     )}
                     {item.name === "file-sharing" && isNewFileShare && (
-                        <span className="absolute right-0 top-0 h-2.5 w-2.5 rounded-full bg-primary" />
+                        <span className="absolute -right-1 -top-1 flex h-3 w-3">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-300 opacity-75" />
+                            <span className="relative inline-flex h-3 w-3 rounded-full border border-white/50 bg-cyan-200" />
+                        </span>
                     )}
                 </div>
             ))}

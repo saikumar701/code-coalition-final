@@ -45,30 +45,31 @@ const TreeNode: React.FC<TreeNodeProps> = ({
 
     const currentPath = [...pathSegments, node.name].join("/")
     const terminalPath = node.type === "directory" ? currentPath : pathSegments.join("/")
+    const directoryRowClassName = `explorer-row mb-0.5 flex cursor-pointer items-center rounded-lg border px-2 py-1.5 text-base transition-all ${
+        selectedDirId === node.id
+            ? "explorer-row--active"
+            : "border-transparent"
+    }`
 
     if (node.type === "directory") {
         return (
             <div onContextMenu={handleContextMenu} onClick={closeContextMenu}>
                 <div
-                    className={`flex items-center cursor-pointer rounded-sm ${
-                        selectedDirId === node.id
-                            ? "bg-blue-500/20 border-l-2 border-blue-500"
-                            : "hover:bg-gray-700"
-                    }`}
+                    className={directoryRowClassName}
                     onClick={(e) => {
                         e.stopPropagation()
                         onSelectDirectory(node.id)
                         toggleDirectory(node.id)
                     }}
                 >
-                    {node.isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                    {node.isOpen ? <FolderOpen size={16} /> : <FolderIcon size={16} />}
-                    <span className="ml-2">{node.name}</span>
+                    {node.isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                    {node.isOpen ? <FolderOpen size={20} /> : <FolderIcon size={20} />}
+                    <span className="ml-2 truncate">{node.name}</span>
                 </div>
                 {node.isOpen &&
                     node.children &&
                     node.children.map((child) => (
-                        <div key={child.id} className="ml-4">
+                        <div key={child.id} className="explorer-indent ml-3 border-l pl-2">
                             <TreeNode
                                 node={child}
                                 selectedDirId={selectedDirId}
@@ -100,10 +101,10 @@ const TreeNode: React.FC<TreeNodeProps> = ({
 
     return (
         <div
-            className={`flex items-center cursor-pointer ${
+            className={`explorer-row mb-0.5 flex cursor-pointer items-center rounded-lg border px-2 py-1.5 text-base transition-all ${
                 isSelected
-                    ? "bg-blue-500/30 border-l-2 border-blue-500"
-                    : "hover:bg-gray-700"
+                    ? "explorer-row--active"
+                    : "border-transparent"
             }`}
             onClick={() => {
                 onSelectDirectory(parentDirectoryId)
@@ -113,10 +114,10 @@ const TreeNode: React.FC<TreeNodeProps> = ({
         >
             <Icon
                 icon={getIconClassName(node.name)}
-                fontSize={16}
-                className="mr-2 flex-shrink-0"
+                fontSize={20}
+                className="mr-2 flex-shrink-0 opacity-95"
             />
-            <span className="ml-2">{icon} {node.name}</span>
+            <span className="ml-2 truncate">{icon} {node.name}</span>
             {contextMenu && (
                 <NodeContextMenu
                     x={contextMenu.x}

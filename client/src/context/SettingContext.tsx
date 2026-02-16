@@ -2,6 +2,7 @@ import useLocalStorage from "@/hooks/useLocalStorage"
 import {
     Settings,
     SettingsContext as SettingsContextType,
+    UIMode,
 } from "@/types/setting"
 import {
     ReactNode,
@@ -29,6 +30,7 @@ const defaultSettings: Settings = {
     fontSize: 16,
     fontFamily: "Space Mono",
     showGitHubCorner: true,
+    uiMode: "dark",
 }
 
 function SettingContextProvider({ children }: { children: ReactNode }) {
@@ -56,6 +58,11 @@ function SettingContextProvider({ children }: { children: ReactNode }) {
         storedSettings.showGitHubCorner !== undefined
             ? storedSettings.showGitHubCorner
             : defaultSettings.showGitHubCorner
+    const storedUiMode =
+        storedSettings.uiMode !== undefined
+            ? storedSettings.uiMode
+            : defaultSettings.uiMode
+    const resolvedUiMode: UIMode = storedUiMode === "light" ? "light" : "dark"
 
     const [theme, setTheme] = useState<string>(storedTheme)
     const [language, setLanguage] = useState<string>(storedLanguage)
@@ -64,6 +71,7 @@ function SettingContextProvider({ children }: { children: ReactNode }) {
     const [showGitHubCorner, setShowGitHubCorner] = useState<boolean>(
         storedShowGitHubCorner,
     )
+    const [uiMode, setUiMode] = useState<UIMode>(resolvedUiMode)
 
     const resetSettings = () => {
         setTheme(defaultSettings.theme)
@@ -71,6 +79,7 @@ function SettingContextProvider({ children }: { children: ReactNode }) {
         setFontSize(defaultSettings.fontSize)
         setFontFamily(defaultSettings.fontFamily)
         setShowGitHubCorner(defaultSettings.showGitHubCorner)
+        setUiMode(defaultSettings.uiMode)
     }
 
     useEffect(() => {
@@ -81,9 +90,20 @@ function SettingContextProvider({ children }: { children: ReactNode }) {
             fontSize,
             fontFamily,
             showGitHubCorner,
+            uiMode,
         }
         localStorage.setItem("settings", JSON.stringify(updatedSettings))
-    }, [theme, language, fontSize, fontFamily, showGitHubCorner])
+    }, [theme, language, fontSize, fontFamily, showGitHubCorner, uiMode])
+
+    useEffect(() => {
+        const root = document.documentElement
+        root.classList.remove("ui-dark", "ui-light", "dark")
+        if (uiMode === "dark") {
+            root.classList.add("ui-dark", "dark")
+        } else {
+            root.classList.add("ui-light")
+        }
+    }, [uiMode])
 
     return (
         <SettingContext.Provider
@@ -98,6 +118,8 @@ function SettingContextProvider({ children }: { children: ReactNode }) {
                 setFontFamily,
                 showGitHubCorner,
                 setShowGitHubCorner,
+                uiMode,
+                setUiMode,
                 resetSettings,
             }}
         >

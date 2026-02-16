@@ -156,21 +156,23 @@ const FileSharingView = () => {
 
     return (
         <div
-            className="flex max-h-full min-h-[400px] w-full flex-col gap-3 p-4 text-white"
+            className="sidebar-modern-view flex max-h-full min-h-[400px] w-full flex-col gap-3 p-4"
             style={{ height: viewHeight }}
         >
-            <h1 className="view-title">File Sharing</h1>
+            <div className="sidebar-modern-header">
+                <h1 className="view-title m-0 border-none pb-0">File Sharing</h1>
+            </div>
 
-            <div className="rounded-md border border-gray-700 bg-gray-900/50 p-3">
+            <div className="sidebar-modern-card">
                 <div className="mb-3 flex flex-col gap-3">
                     <input
                         ref={inputRef}
                         type="file"
                         onChange={handleSelectFile}
-                        className="w-full rounded-md border border-gray-700 bg-gray-800 p-2 text-sm"
+                        className="sidebar-modern-control p-2 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-200/80 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-cyan-950"
                     />
                     <select
-                        className="w-full rounded-md border border-gray-700 bg-gray-800 p-2 text-sm"
+                        className="sidebar-modern-control p-2 text-sm"
                         value={selectedRecipient}
                         onChange={(event) =>
                             setSelectedRecipient(event.target.value as FileShareRecipient)
@@ -186,26 +188,26 @@ const FileSharingView = () => {
                 </div>
                 <button
                     type="button"
-                    className="flex w-full items-center justify-center gap-2 rounded-md bg-white p-2 text-black disabled:cursor-not-allowed disabled:opacity-50"
+                    className="sidebar-modern-btn sidebar-modern-btn--primary flex w-full"
                     onClick={handleSendFile}
                     disabled={!selectedFile || isSending}
                 >
                     <FiUpload />
                     {isSending ? "Sharing..." : "Share file"}
                 </button>
-                <p className="mt-2 text-xs text-gray-400">
+                <p className="ui-muted-text mt-2 text-xs">
                     Any file type is supported. Max file size: {maxFileShareSizeMb}MB.
                 </p>
                 {selectedFile && (
-                    <p className="mt-1 text-xs text-gray-300">
+                    <p className="ui-muted-text mt-1 text-xs">
                         Selected: {selectedFile.name} ({formatFileSize(selectedFile.size)})
                     </p>
                 )}
             </div>
 
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border border-gray-700 bg-gray-900/40 p-2">
+            <div className="sidebar-modern-scroll min-h-0 flex-1 overflow-auto p-2">
                 {transfers.length === 0 ? (
-                    <p className="p-2 text-sm text-gray-400">
+                    <p className="ui-muted-text p-2 text-sm">
                         Shared files will appear here.
                     </p>
                 ) : (
@@ -213,26 +215,26 @@ const FileSharingView = () => {
                         {transfers.map((transfer) => (
                             <div
                                 key={`${transfer.id}-${transfer.direction}`}
-                                className="rounded-md border border-gray-700 bg-gray-800/70 p-3"
+                                className="sidebar-modern-list-item p-3"
                             >
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                     <p className="max-w-[70%] truncate text-sm font-medium">
                                         {transfer.name}
                                     </p>
-                                    <span className="text-xs text-gray-400">
+                                    <span className="ui-muted-text text-xs">
                                         {formatFileSize(transfer.size)}
                                     </span>
                                 </div>
-                                <p className="mt-1 text-xs text-gray-400">
+                                <p className="ui-muted-text mt-1 text-xs">
                                     {getTransferLabel(transfer, recipientNameBySocketId)}
                                 </p>
-                                <p className="mt-1 text-xs text-gray-500">
+                                <p className="ui-muted-text mt-1 text-xs">
                                     {new Date(transfer.sentAt).toLocaleString()}
                                 </p>
                                 <div className="mt-3 flex gap-2">
                                     <button
                                         type="button"
-                                        className="flex items-center gap-1 rounded-md border border-gray-600 px-2 py-1 text-xs hover:bg-gray-700"
+                                        className="sidebar-modern-btn px-2 py-1 text-xs"
                                         onClick={() => handleOpen(transfer)}
                                     >
                                         <FiExternalLink />
@@ -240,7 +242,7 @@ const FileSharingView = () => {
                                     </button>
                                     <button
                                         type="button"
-                                        className="flex items-center gap-1 rounded-md border border-gray-600 px-2 py-1 text-xs hover:bg-gray-700"
+                                        className="sidebar-modern-btn px-2 py-1 text-xs"
                                         onClick={() => handleDownload(transfer)}
                                     >
                                         <FiDownload />

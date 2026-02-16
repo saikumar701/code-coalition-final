@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
 import { SocketEvent } from "@/types/socket"
 import { useSocket } from "@/context/SocketContext"
+import { useSettings } from "@/context/SettingContext"
 import { Terminal as TerminalIcon, X } from "lucide-react"
 import { Terminal } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
@@ -17,6 +18,7 @@ type TerminalCdEventDetail = {
 
 function TerminalComponent() {
     const { socket } = useSocket()
+    const { uiMode } = useSettings()
     const terminalElementRef = useRef<HTMLDivElement | null>(null)
     const xtermRef = useRef<Terminal | null>(null)
     const fitAddonRef = useRef<FitAddon | null>(null)
@@ -30,9 +32,17 @@ function TerminalComponent() {
             fontFamily: "Consolas, 'Courier New', monospace",
             fontSize: 13,
             theme: {
-                background: "#1E1E1E",
-                foreground: "#d4d4d4",
-                cursor: "#d4d4d4",
+                background: uiMode === "light" ? "#f8fafc" : "#1e1e1e",
+                foreground: uiMode === "light" ? "#0f172a" : "#d4d4d4",
+                cursor: uiMode === "light" ? "#0f172a" : "#d4d4d4",
+                black: uiMode === "light" ? "#334155" : "#111827",
+                red: uiMode === "light" ? "#dc2626" : "#ef4444",
+                green: uiMode === "light" ? "#059669" : "#22c55e",
+                yellow: uiMode === "light" ? "#b45309" : "#eab308",
+                blue: uiMode === "light" ? "#0284c7" : "#3b82f6",
+                magenta: uiMode === "light" ? "#a21caf" : "#d946ef",
+                cyan: uiMode === "light" ? "#0e7490" : "#06b6d4",
+                white: uiMode === "light" ? "#0f172a" : "#e5e7eb",
             },
         })
         const fitAddon = new FitAddon()
@@ -109,7 +119,7 @@ function TerminalComponent() {
             xtermRef.current = null
             fitAddonRef.current = null
         }
-    }, [socket])
+    }, [socket, uiMode])
 
     const clearTerminal = () => {
         socket.emit(SocketEvent.TERMINAL_RESET)
@@ -119,16 +129,16 @@ function TerminalComponent() {
     }
 
     return (
-        <div className="flex h-full flex-col bg-[#1E1E1E]">
-            <div className="flex items-center justify-between border-b border-gray-700 bg-[#252526] px-3 py-1.5">
+        <div className="terminal-shell flex h-full flex-col">
+            <div className="terminal-header flex items-center justify-between border-b px-3 py-1.5">
                 <div className="flex items-center gap-2">
-                    <TerminalIcon size={14} className="text-gray-400" />
-                    <span className="text-xs font-medium text-gray-400">Terminal</span>
-                    <span className="text-xs text-gray-500">PowerShell</span>
+                    <TerminalIcon size={14} className="text-[var(--ui-terminal-muted)]" />
+                    <span className="text-xs font-medium text-[var(--ui-terminal-text)]">Terminal</span>
+                    <span className="text-xs text-[var(--ui-terminal-muted)]">PowerShell</span>
                 </div>
                 <button
                     onClick={clearTerminal}
-                    className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+                    className="terminal-action-btn rounded p-1 transition-colors"
                     title="Clear terminal"
                 >
                     <X size={14} />

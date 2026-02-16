@@ -11,6 +11,7 @@ import os from "os"
 import fs from "fs"
 import fsPromises from "fs/promises"
 import { randomBytes } from "crypto"
+import { spawn } from "child_process"
 
 const loadServerEnv = () => {
 	const envPaths = [
@@ -67,6 +68,20 @@ const oauthStateStore = new Map<string, OAuthStateRecord>()
 const oauthStateTtlMs = 10 * 60 * 1000
 const googleDriveScope = "https://www.googleapis.com/auth/drive.readonly"
 const githubScope = "repo read:user"
+const defaultPistonApiBaseUrl = "http://localhost:2000/api/v2/piston"
+const localRunTimeoutMs = 15000
+const localFallbackRuntimes: PistonRuntime[] = [
+	{
+		language: "javascript",
+		version: "local",
+		aliases: ["js", "node"],
+	},
+	{
+		language: "python",
+		version: "local",
+		aliases: ["py", "python3"],
+	},
+]
 
 interface WorkspaceFileSystemItem {
 	id: string
@@ -144,6 +159,37 @@ interface OAuthStateRecord {
 	createdAt: number
 }
 
+interface PistonRuntime {
+	language: string
+	version: string
+	aliases: string[]
+}
+
+interface PistonExecuteFile {
+	name?: string
+	content?: string
+}
+
+interface PistonExecuteBody {
+	language?: string
+	version?: string
+	files?: PistonExecuteFile[]
+	stdin?: string
+}
+
+interface LocalExecutionResult {
+	stdout: string
+	stderr: string
+	code: number | null
+	signal: NodeJS.Signals | null
+	spawnErrorCode?: string
+}
+
+interface LocalCommandCandidate {
+	command: string
+	getArgs: (filePath: string) => string[]
+}
+
 if (!fs.existsSync(workspaceRoot)) {
 	fs.mkdirSync(workspaceRoot, { recursive: true })
 }
@@ -176,9 +222,14 @@ function createPtyForSocket(socketId: SocketId, socket: any, cwd: string): pty.I
 	})
 
 	instance.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
-		console.log(
-			`PTY process for ${socketId} exited with code ${exitCode}, signal ${signal}`
-		)
+		const isUserInterrupt = exitCode === -1073741510 || exitCode === 130
+		if (isUserInterrupt) {
+			console.log(`PTY process for ${socketId} interrupted by user.`)
+		} else {
+			console.log(
+				`PTY process for ${socketId} exited with code ${exitCode}, signal ${signal}`
+			)
+		}
 		ptyProcess.delete(socketId)
 		socket.emit(SocketEvent.TERMINAL_OUTPUT, {
 			data: "\r\n[Terminal session ended. Press Enter to restart]\r\n",
@@ -471,6 +522,235 @@ function buildOAuthRedirectUri(req: Request, provider: OAuthProvider): string {
 	const serverBaseUrl = getServerPublicBaseUrl(req)
 	const pathSuffix = provider === "github" ? "github" : "gdrive"
 	return `${serverBaseUrl}/api/oauth/${pathSuffix}/callback`
+}
+
+function getPistonApiBaseUrl(): string {
+	const configuredBaseUrl = (
+		process.env.PISTON_API_BASE_URL || defaultPistonApiBaseUrl
+	).trim()
+	return configuredBaseUrl.replace(/\/+$/, "")
+}
+
+function getPistonAuthHeaders(): Record<string, string> {
+	const pistonApiToken = (process.env.PISTON_API_TOKEN || "").trim()
+	if (!pistonApiToken) {
+		return {}
+	}
+	return {
+		Authorization: `Bearer ${pistonApiToken}`,
+	}
+}
+
+function normalizeLanguageName(value: string): string {
+	return value.trim().toLowerCase()
+}
+
+function getLocalFileExtension(language: string): string {
+	const normalizedLanguage = normalizeLanguageName(language)
+	if (["javascript", "js", "node"].includes(normalizedLanguage)) return ".js"
+	if (["python", "py", "python3"].includes(normalizedLanguage)) return ".py"
+	return ".txt"
+}
+
+function getLocalCommandCandidates(language: string): LocalCommandCandidate[] {
+	const normalizedLanguage = normalizeLanguageName(language)
+
+	if (["javascript", "js", "node"].includes(normalizedLanguage)) {
+		return [
+			{
+				command: "node",
+				getArgs: (filePath: string) => [filePath],
+			},
+		]
+	}
+
+	if (["python", "py", "python3"].includes(normalizedLanguage)) {
+		return [
+			{
+				command: "python",
+				getArgs: (filePath: string) => [filePath],
+			},
+			{
+				command: "py",
+				getArgs: (filePath: string) => ["-3", filePath],
+			},
+		]
+	}
+
+	return []
+}
+
+function runLocalCommand({
+	command,
+	args,
+	stdin,
+	cwd,
+	timeoutMs,
+}: {
+	command: string
+	args: string[]
+	stdin: string
+	cwd: string
+	timeoutMs: number
+}): Promise<LocalExecutionResult> {
+	return new Promise((resolve, reject) => {
+		let stdout = ""
+		let stderr = ""
+		let settled = false
+		let timedOut = false
+
+		const child = spawn(command, args, {
+			cwd,
+			windowsHide: true,
+		})
+
+		const finish = (result: LocalExecutionResult) => {
+			if (settled) return
+			settled = true
+			resolve(result)
+		}
+
+		const timer = setTimeout(() => {
+			timedOut = true
+			child.kill()
+		}, timeoutMs)
+
+		child.stdout.on("data", (chunk: Buffer | string) => {
+			stdout += chunk.toString()
+		})
+
+		child.stderr.on("data", (chunk: Buffer | string) => {
+			stderr += chunk.toString()
+		})
+
+		child.on("error", (error) => {
+			clearTimeout(timer)
+			const errorCode = (error as NodeJS.ErrnoException).code || ""
+			if (errorCode === "ENOENT") {
+				finish({
+					stdout: "",
+					stderr: "",
+					code: null,
+					signal: null,
+					spawnErrorCode: "ENOENT",
+				})
+				return
+			}
+
+			if (settled) return
+			settled = true
+			reject(error)
+		})
+
+		child.on("close", (code, signal) => {
+			clearTimeout(timer)
+			const timeoutMessage = timedOut
+				? `\nExecution timed out after ${Math.floor(timeoutMs / 1000)} seconds.`
+				: ""
+			finish({
+				stdout,
+				stderr: `${stderr}${timeoutMessage}`,
+				code,
+				signal,
+			})
+		})
+
+		if (stdin) {
+			child.stdin.write(stdin)
+		}
+		child.stdin.end()
+	})
+}
+
+async function executeWithLocalRuntime(
+	body: PistonExecuteBody,
+): Promise<{ success: true; response: unknown } | { success: false; error: string }> {
+	const language = normalizeLanguageName(body.language || "")
+	const files = Array.isArray(body.files) ? body.files : []
+	const firstFile = files[0]
+	const content =
+		typeof firstFile?.content === "string"
+			? firstFile.content
+			: typeof firstFile?.content === "number"
+				? String(firstFile.content)
+				: ""
+
+	if (!language) {
+		return { success: false, error: "Language is required." }
+	}
+
+	if (!files.length) {
+		return { success: false, error: "At least one file is required to execute code." }
+	}
+
+	const commandCandidates = getLocalCommandCandidates(language)
+	if (!commandCandidates.length) {
+		return {
+			success: false,
+			error: `No local runtime configured for language "${language}".`,
+		}
+	}
+
+	const safeFileName = path.basename((firstFile?.name || "main").trim()) || "main"
+	const hasKnownExtension = path.extname(safeFileName).length > 0
+	const targetFileName = hasKnownExtension
+		? safeFileName
+		: `${safeFileName}${getLocalFileExtension(language)}`
+
+	const tempDirectory = await fsPromises.mkdtemp(
+		path.join(os.tmpdir(), "code-coalition-run-"),
+	)
+	const filePath = path.join(tempDirectory, targetFileName)
+
+	try {
+		await fsPromises.writeFile(filePath, content, "utf8")
+
+		let lastCommandError = ""
+
+		for (const candidate of commandCandidates) {
+			const commandResult = await runLocalCommand({
+				command: candidate.command,
+				args: candidate.getArgs(filePath),
+				stdin: typeof body.stdin === "string" ? body.stdin : "",
+				cwd: tempDirectory,
+				timeoutMs: localRunTimeoutMs,
+			})
+
+			if (commandResult.spawnErrorCode === "ENOENT") {
+				lastCommandError = `Command "${candidate.command}" is not installed.`
+				continue
+			}
+
+			return {
+				success: true,
+				response: {
+					language,
+					version: "local",
+					run: {
+						stdout: commandResult.stdout,
+						stderr: commandResult.stderr,
+						code: commandResult.code,
+						signal: commandResult.signal,
+						output: `${commandResult.stdout}${commandResult.stderr}`,
+					},
+				},
+			}
+		}
+
+		return {
+			success: false,
+			error:
+				lastCommandError ||
+				`Local runtime for language "${language}" is unavailable on this machine.`,
+		}
+	} catch (error) {
+		return {
+			success: false,
+			error: `Local execution failed: ${(error as Error).message}`,
+		}
+	} finally {
+		await fsPromises.rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+	}
 }
 
 function cleanupOAuthStateStore() {
@@ -1281,6 +1561,78 @@ app.post("/api/copilot/generate", async (req: Request, res: Response) => {
 		console.error("Copilot API error:", error)
 		res.status(500).json({ error: `Failed to generate code: ${(error as Error).message}` })
 	}
+})
+
+app.get("/api/piston/runtimes", async (_req: Request, res: Response) => {
+	try {
+		loadServerEnv()
+		const pistonApiBaseUrl = getPistonApiBaseUrl()
+		const upstreamResponse = await fetch(`${pistonApiBaseUrl}/runtimes`, {
+			method: "GET",
+			headers: {
+				...getPistonAuthHeaders(),
+			},
+		})
+		const data = await upstreamResponse.json().catch(() => null)
+
+		if (!upstreamResponse.ok) {
+			const upstreamErrorMessage =
+				(typeof data?.message === "string" && data.message) ||
+				(typeof data?.error === "string" && data.error) ||
+				`Failed to fetch Piston runtimes (${upstreamResponse.status}).`
+			console.warn("Piston runtimes unavailable, using local fallbacks:", upstreamErrorMessage)
+			return res.json(localFallbackRuntimes)
+		}
+
+		return res.json(data)
+	} catch (error) {
+		console.warn("Piston runtimes proxy error, using local fallbacks:", error)
+		return res.json(localFallbackRuntimes)
+	}
+})
+
+app.post("/api/piston/execute", async (req: Request, res: Response) => {
+	const executeBody = (req.body || {}) as PistonExecuteBody
+	let upstreamErrorMessage = ""
+
+	try {
+		loadServerEnv()
+		const pistonApiBaseUrl = getPistonApiBaseUrl()
+		const upstreamResponse = await fetch(`${pistonApiBaseUrl}/execute`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				...getPistonAuthHeaders(),
+			},
+			body: JSON.stringify(executeBody),
+		})
+		const data = await upstreamResponse.json().catch(() => null)
+
+		if (!upstreamResponse.ok) {
+			upstreamErrorMessage =
+				(typeof data?.message === "string" && data.message) ||
+				(typeof data?.error === "string" && data.error) ||
+				`Failed to execute code on Piston API (${upstreamResponse.status}).`
+		} else {
+			return res.json(data)
+		}
+	} catch (error) {
+		upstreamErrorMessage = `Piston execute proxy error: ${(error as Error).message}`
+	}
+
+	const localExecution = await executeWithLocalRuntime(executeBody)
+	if (localExecution.success) {
+		return res.json(localExecution.response)
+	}
+
+	const fallbackError = localExecution.error
+	if (upstreamErrorMessage) {
+		return res.status(502).json({
+			error: `${upstreamErrorMessage} Local fallback failed: ${fallbackError}`,
+		})
+	}
+
+	return res.status(400).json({ error: fallbackError })
 })
 
 app.get("/api/oauth/:provider/start", (req: Request, res: Response) => {

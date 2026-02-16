@@ -205,7 +205,7 @@ const EditorPage = () => {
     const hasExecutionError = (hasRunError || hasTerminalError) && !isRunning
 
     return (
-        <div className="relative flex h-screen flex-col overflow-hidden bg-gray-900 text-white">
+        <div className="workspace-shell relative flex h-screen flex-col overflow-hidden text-[var(--ui-text-primary)]">
             <TopToolbar />
             <div className="flex flex-grow min-h-0">
                 <LeftSidebar
@@ -216,7 +216,7 @@ const EditorPage = () => {
                 <ResizablePanelGroup direction="horizontal" className="flex-grow">
                     {/* Sidebar Panel */}
                     <ResizablePanel defaultSize={20} minSize={15} maxSize={35}>
-                        <div className="h-full bg-gray-800/50 border-r border-gray-700 overflow-auto">
+                        <div className="workspace-sidebar-surface h-full overflow-auto">
                             {renderActiveSidebarView()}
                         </div>
                     </ResizablePanel>
@@ -228,17 +228,16 @@ const EditorPage = () => {
                         <ResizablePanelGroup direction="vertical">
                             {/* Editor Panel */}
                             <ResizablePanel defaultSize={70} minSize={30}>
-                                <div className="relative h-full flex flex-col bg-gray-900">
+                                <div className="workspace-editor-shell relative flex h-full flex-col">
                                     {/* Tab Bar */}
-                                    <div className="flex items-center gap-1 bg-gray-800 border-b border-gray-700 px-2 py-1.5 flex-shrink-0">
+                                    <div className="workspace-tabbar flex flex-shrink-0 items-center gap-2 px-3 py-2">
                                         <button
                                             onClick={() => setActiveEditorTab("code")}
                                             className={`
-                                                flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium
-                                                transition-all duration-200
+                                                workspace-tab-btn flex items-center gap-2 px-4 py-2 text-sm font-medium
                                                 ${activeEditorTab === "code" 
-                                                    ? "bg-gray-700 text-white shadow-sm" 
-                                                    : "text-gray-400 hover:text-gray-200 hover:bg-gray-700/50"
+                                                    ? "workspace-tab-btn--active" 
+                                                    : ""
                                                 }
                                             `}
                                         >
@@ -248,11 +247,10 @@ const EditorPage = () => {
                                         <button
                                             onClick={() => setActiveEditorTab("draw")}
                                             className={`
-                                                flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium
-                                                transition-all duration-200
+                                                workspace-tab-btn flex items-center gap-2 px-4 py-2 text-sm font-medium
                                                 ${activeEditorTab === "draw" 
-                                                    ? "bg-gray-700 text-white shadow-sm" 
-                                                    : "text-gray-400 hover:text-gray-200 hover:bg-gray-700/50"
+                                                    ? "workspace-tab-btn--active" 
+                                                    : ""
                                                 }
                                             `}
                                         >
@@ -262,7 +260,7 @@ const EditorPage = () => {
                                     </div>
 
                                     {/* Tab Content - with key to force remount */}
-                                    <div className="flex-grow min-h-0 relative bg-gray-900 overflow-hidden">
+                                    <div className="relative min-h-0 flex-grow overflow-hidden">
                                         {activeEditorTab === "code" && (
                                             <div key={`editor-${editorKey}`} className="absolute inset-0">
                                                 <EditorComponent />

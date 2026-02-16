@@ -5,15 +5,16 @@ import { FileSystemItem, Id } from "@/types/file"
 import { getFileById, sortFileSystemItem } from "@/utils/file"
 import cn from "classnames"
 import {
-    FileArchive,
+    Check,
     FilePlus,
     FileUp,
     Folder as FolderIcon,
     FolderPlus,
     FolderUp,
     Upload,
+    X,
 } from "lucide-react"
-import DropZone from "../DropZone"
+import { toast } from "react-hot-toast"
 import TreeNode from "./TreeNode"
 
 function FileStructureView() {
@@ -23,27 +24,90 @@ function FileStructureView() {
         createDirectory,
         collapseDirectories,
         importFile,
-        importZip,
     } = useFileSystem()
-
     const explorerRef = useRef<HTMLDivElement | null>(null)
     const fileInputRef = useRef<HTMLInputElement | null>(null)
     const folderInputRef = useRef<HTMLInputElement | null>(null)
+    const createInputRef = useRef<HTMLInputElement | null>(null)
     const [selectedDirId, setSelectedDirId] = useState<Id>(fileStructure.id)
+    const [createMode, setCreateMode] = useState<"file" | "directory" | null>(null)
+    const [createName, setCreateName] = useState("")
     const { minHeightReached } = useResponsive()
 
     useEffect(() => {
         setSelectedDirId(fileStructure.id)
     }, [fileStructure.id])
 
+    useEffect(() => {
+        if (!createMode || !createInputRef.current) return
+        createInputRef.current.focus()
+    }, [createMode])
+
     const resolveSelectedDirectoryId = () => selectedDirId || fileStructure.id
+
+    const startCreate = (mode: "file" | "directory") => {
+        setCreateMode(mode)
+        setCreateName("")
+    }
+
+    const cancelCreate = () => {
+        setCreateMode(null)
+        setCreateName("")
+    }
+
+    const submitCreate = () => {
+        if (!createMode) return
+        const trimmedName = createName.trim()
+        if (!trimmedName) {
+            toast.error(`Enter a ${createMode === "file" ? "file" : "folder"} name`)
+            return
+        }
+
+        const targetDirectoryId = resolveSelectedDirectoryId()
+        if (createMode === "file") {
+            createFile(targetDirectoryId, trimmedName)
+        } else {
+            const newDirectoryId = createDirectory(targetDirectoryId, trimmedName)
+            setSelectedDirId(newDirectoryId)
+        }
+
+        setCreateMode(null)
+        setCreateName("")
+    }
+
+    const handleCreateKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+        if (event.key === "Enter") {
+            event.preventDefault()
+            submitCreate()
+            return
+        }
+        if (event.key === "Escape") {
+            event.preventDefault()
+            cancelCreate()
+        }
+    }
+
+    const handleCollapseAll = () => {
+        collapseDirectories()
+        setSelectedDirId(fileStructure.id)
+    }
+
+    const handleImportFilesClick = () => {
+        fileInputRef.current?.click()
+    }
+
+    const handleImportFolderClick = () => {
+        folderInputRef.current?.click()
+    }
 
     const readFileContent = (
         file: File,
-    ): Promise<{ content: string; contentEncoding: "utf8" | "base64"; mimeType: string }> => {
-        return new Promise((resolve, reject) => {
+    ): Promise<{ content: string; contentEncoding: "utf8" | "base64"; mimeType: string }> =>
+        new Promise((resolve, reject) => {
             const reader = new FileReader()
-            const isLikelyText = file.type.startsWith("text/") || /(json|javascript|typescript|xml|csv|yaml|yml|svg)/i.test(file.type)
+            const isLikelyText =
+                file.type.startsWith("text/") ||
+                /(json|javascript|typescript|xml|csv|yaml|yml|svg)/i.test(file.type)
 
             reader.onload = () => {
                 if (isLikelyText) {
@@ -63,6 +127,7 @@ function FileStructureView() {
                     mimeType: file.type || "application/octet-stream",
                 })
             }
+
             reader.onerror = reject
             if (isLikelyText) {
                 reader.readAsText(file)
@@ -70,15 +135,6 @@ function FileStructureView() {
                 reader.readAsDataURL(file)
             }
         })
-    }
-
-    const openPathInTerminal = (relativePath: string) => {
-        window.dispatchEvent(
-            new CustomEvent("terminal:cd", {
-                detail: { path: relativePath || "." },
-            }),
-        )
-    }
 
     const getOrCreateDirectoryId = (
         directoryPathCache: Map<string, string>,
@@ -102,26 +158,6 @@ function FileStructureView() {
         const directoryId = existingDirectory?.id || createDirectory(parentId, directoryName)
         directoryPathCache.set(cacheKey, directoryId)
         return directoryId
-    }
-
-    const handleCreateFile = () => {
-        const fileName = prompt("Enter file name")
-        if (!fileName) return
-        createFile(resolveSelectedDirectoryId(), fileName)
-    }
-
-    const handleCreateDirectory = () => {
-        const dirName = prompt("Enter directory name")
-        if (!dirName) return
-        createDirectory(resolveSelectedDirectoryId(), dirName)
-    }
-
-    const handleImportFile = () => {
-        fileInputRef.current?.click()
-    }
-
-    const handleImportFolder = () => {
-        folderInputRef.current?.click()
     }
 
     const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,9 +187,7 @@ function FileStructureView() {
         for (let index = 0; index < files.length; index += 1) {
             const file = files[index]
             const filePayload = await readFileContent(file)
-            const relativePath = (file.webkitRelativePath || file.name)
-                .split("/")
-                .filter(Boolean)
+            const relativePath = (file.webkitRelativePath || file.name).split("/").filter(Boolean)
             if (relativePath.length === 0) continue
 
             const directoryParts = relativePath.slice(0, -1)
@@ -182,56 +216,19 @@ function FileStructureView() {
         event.target.value = ""
     }
 
-    const readDirectoryEntries = async (reader: any): Promise<any[]> => {
-        const entries: any[] = []
-        let batch: any[] = await new Promise((resolve) => reader.readEntries(resolve))
-
-        while (batch.length > 0) {
-            entries.push(...batch)
-            batch = await new Promise((resolve) => reader.readEntries(resolve))
-        }
-
-        return entries
-    }
-
-    const processEntry = async (entry: any, parentId: string): Promise<void> => {
-        if (entry.isFile) {
-            const file = await new Promise<File>((resolve) => entry.file(resolve))
-            const filePayload = await readFileContent(file)
-            importFile(parentId, file.name, filePayload.content, false, {
-                contentEncoding: filePayload.contentEncoding,
-                mimeType: filePayload.mimeType,
-            })
-            return
-        }
-
-        if (entry.isDirectory) {
-            const newDirectoryId = createDirectory(parentId, entry.name)
-            const reader = entry.createReader()
-            const entries = await readDirectoryEntries(reader)
-            for (const child of entries) {
-                await processEntry(child, newDirectoryId)
-            }
-        }
-    }
-
-    const handleDrop = async (event: React.DragEvent) => {
-        event.preventDefault()
-        const targetDirectoryId = resolveSelectedDirectoryId()
-        const items = event.dataTransfer.items
-
-        for (let index = 0; index < items.length; index += 1) {
-            const entry = (items[index] as any).webkitGetAsEntry?.()
-            if (entry) {
-                await processEntry(entry, targetDirectoryId)
-            }
-        }
+    const openPathInTerminal = (relativePath: string) => {
+        window.dispatchEvent(
+            new CustomEvent("terminal:cd", {
+                detail: { path: relativePath || "." },
+            }),
+        )
     }
 
     const sortedFileStructure = sortFileSystemItem(fileStructure)
+    const actionButtonClassName = "sidebar-modern-btn h-10 w-10 rounded-xl p-0 text-slate-50"
 
     return (
-        <div className="flex h-full flex-grow flex-col bg-[#1E1E1E] text-white">
+        <div className="file-explorer-view sidebar-modern-view flex h-full flex-grow flex-col">
             <input
                 ref={fileInputRef}
                 type="file"
@@ -248,76 +245,88 @@ function FileStructureView() {
                 className="hidden"
                 {...({ webkitdirectory: "", directory: "" } as any)}
             />
-
-            <div className="flex items-center justify-between border-b border-gray-800 bg-[#252526] px-3 py-2">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+            <div className="sidebar-modern-header px-3 py-2">
+                <h2 className="ui-muted-text text-xs font-semibold uppercase tracking-wide">
                     Explorer
                 </h2>
                 <div className="flex gap-1">
                     <button
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
-                        onClick={handleCreateFile}
+                        className={actionButtonClassName}
+                        onClick={() => startCreate("file")}
                         title="New File"
                     >
-                        <FilePlus size={16} />
+                        <FilePlus size={20} />
                     </button>
                     <button
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
-                        onClick={handleCreateDirectory}
+                        className={actionButtonClassName}
+                        onClick={() => startCreate("directory")}
                         title="New Folder"
                     >
-                        <FolderPlus size={16} />
+                        <FolderPlus size={20} />
                     </button>
                     <button
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
-                        onClick={handleImportFile}
+                        className={actionButtonClassName}
+                        onClick={handleImportFilesClick}
                         title="Import Files"
                     >
-                        <FileUp size={16} />
+                        <FileUp size={20} />
                     </button>
                     <button
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
-                        onClick={handleImportFolder}
+                        className={actionButtonClassName}
+                        onClick={handleImportFolderClick}
                         title="Import Folder"
                     >
-                        <Upload size={16} />
+                        <Upload size={20} />
                     </button>
                     <button
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
-                        onClick={() => {
-                            const input = document.createElement("input")
-                            input.type = "file"
-                            input.accept = ".zip"
-                            input.onchange = (zipEvent) => {
-                                const target = zipEvent.target as HTMLInputElement
-                                if (target.files && target.files.length > 0) {
-                                    importZip(target.files[0])
-                                }
-                            }
-                            input.click()
-                        }}
-                        title="Import from Zip"
-                    >
-                        <FileArchive size={16} />
-                    </button>
-                    <button
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
-                        onClick={collapseDirectories}
+                        className={actionButtonClassName}
+                        onClick={handleCollapseAll}
                         title="Collapse Folders"
                     >
-                        <FolderUp size={16} />
+                        <FolderUp size={20} />
                     </button>
                 </div>
             </div>
 
-            <div className="p-2">
-                <DropZone />
-            </div>
+            {createMode && (
+                <div className="sidebar-modern-card mx-2 mt-2 space-y-2 p-3">
+                    <p className="ui-muted-text text-xs font-medium uppercase tracking-wide">
+                        {createMode === "file" ? "New File" : "New Folder"}
+                    </p>
+                    <input
+                        ref={createInputRef}
+                        type="text"
+                        value={createName}
+                        onChange={(event) => setCreateName(event.target.value)}
+                        onKeyDown={handleCreateKeyDown}
+                        placeholder={
+                            createMode === "file" ? "example.tsx" : "new-folder"
+                        }
+                        className="sidebar-modern-control px-3 py-2 text-sm"
+                    />
+                    <div className="flex gap-2">
+                        <button
+                            type="button"
+                            onClick={submitCreate}
+                            className="sidebar-modern-btn sidebar-modern-btn--primary h-9 px-3"
+                            title="Create"
+                        >
+                            <Check size={18} />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={cancelCreate}
+                            className="sidebar-modern-btn h-9 px-3"
+                            title="Cancel"
+                        >
+                            <X size={18} />
+                        </button>
+                    </div>
+                </div>
+            )}
 
             <div
-                onDrop={handleDrop}
-                onDragOver={(event) => event.preventDefault()}
-                className={cn("flex-grow overflow-auto", {
+                className={cn("sidebar-modern-scroll mt-2 flex-grow overflow-auto p-2", {
                     "h-[calc(80vh-170px)]": !minHeightReached,
                     "h-[85vh]": minHeightReached,
                 })}
@@ -341,11 +350,11 @@ function FileStructureView() {
                         />
                     ))
                 ) : (
-                    <div className="flex h-full flex-col items-center justify-center px-4 text-sm text-gray-500">
-                        <FolderIcon size={48} className="mb-3 opacity-30" />
+                    <div className="ui-muted-text flex h-full flex-col items-center justify-center px-4 text-sm">
+                        <FolderIcon size={52} className="mb-3 opacity-55" />
                         <p className="mb-2 text-center">No files yet</p>
-                        <p className="text-center text-xs text-gray-600">
-                            Create a new file or import from your device
+                        <p className="text-center text-xs">
+                            Use New File or New Folder to start
                         </p>
                     </div>
                 )}

@@ -34,13 +34,15 @@ const ScreenShareView = () => {
 
     return (
         <div
-            className="flex max-h-full min-h-[400px] w-full flex-col gap-3 p-4 text-white"
+            className="sidebar-modern-view flex max-h-full min-h-[400px] w-full flex-col gap-3 p-4"
             style={{ height: viewHeight }}
         >
-            <h1 className="view-title">Screen Share</h1>
+            <div className="sidebar-modern-header">
+                <h1 className="view-title m-0 border-none pb-0">Screen Share</h1>
+            </div>
 
-            <div className="rounded-md border border-gray-700 bg-gray-900/50 p-3">
-                <p className="text-sm text-gray-200">
+            <div className="sidebar-modern-card">
+                <p className="text-sm text-[var(--ui-text-primary)]">
                     {isSharingScreen
                         ? "You are sharing your screen with this room."
                         : activeScreenShare
@@ -50,7 +52,7 @@ const ScreenShareView = () => {
                 <div className="mt-3 flex gap-2">
                     <button
                         type="button"
-                        className="flex-1 rounded-md bg-white p-2 text-sm font-medium text-black disabled:cursor-not-allowed disabled:opacity-50"
+                        className="sidebar-modern-btn sidebar-modern-btn--primary flex-1"
                         onClick={startScreenShare}
                         disabled={Boolean(activeScreenShare && !isSharingScreen)}
                     >
@@ -58,7 +60,7 @@ const ScreenShareView = () => {
                     </button>
                     <button
                         type="button"
-                        className="flex-1 rounded-md border border-gray-600 p-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        className="sidebar-modern-btn flex-1"
                         onClick={stopScreenShare}
                         disabled={!isSharingScreen}
                     >
@@ -67,10 +69,10 @@ const ScreenShareView = () => {
                 </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border border-gray-700 bg-gray-900/40 p-2">
+            <div className="sidebar-modern-scroll min-h-0 flex-1 overflow-auto p-2">
                 {isSharingScreen && (
-                    <div className="mb-3 rounded-md border border-gray-700 bg-black/40 p-2">
-                        <p className="mb-2 text-xs text-gray-300">Your shared screen preview</p>
+                    <div className="mb-3 rounded-xl border border-cyan-300/25 bg-black/35 p-2">
+                        <p className="ui-muted-text mb-2 text-xs">Your shared screen preview</p>
                         <video
                             ref={localVideoRef}
                             autoPlay
@@ -82,8 +84,8 @@ const ScreenShareView = () => {
                 )}
 
                 {showRemotePreview && (
-                    <div className="rounded-md border border-gray-700 bg-black/40 p-2">
-                        <p className="mb-2 text-xs text-gray-300">
+                    <div className="rounded-xl border border-cyan-300/25 bg-black/35 p-2">
+                        <p className="ui-muted-text mb-2 text-xs">
                             Live view from {activeScreenShare?.username}
                         </p>
                         <video
@@ -96,7 +98,7 @@ const ScreenShareView = () => {
                 )}
 
                 {!isSharingScreen && !showRemotePreview && (
-                    <p className="text-sm text-gray-400">
+                    <p className="ui-muted-text text-sm">
                         Start sharing to broadcast your screen, or wait for someone else to share.
                     </p>
                 )}
