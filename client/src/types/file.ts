@@ -36,6 +36,7 @@ interface FileContext {
     openFile: (fileId: Id) => void
     renameFile: (fileId: Id, newName: FileName) => boolean
     deleteFile: (fileId: Id) => void
+    saveWorkspaceNow: () => void
     downloadFilesAndFolders: () => void
     importFile: (
         parentDirId: Id,

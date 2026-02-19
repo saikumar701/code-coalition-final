@@ -5,6 +5,12 @@ type SocketId = string
 enum SocketEvent {
 	JOIN_REQUEST = "join-request",
 	JOIN_ACCEPTED = "join-accepted",
+	JOIN_PENDING_APPROVAL = "join-pending-approval",
+	JOIN_REJECTED = "join-rejected",
+	ROOM_JOIN_ERROR = "room-join-error",
+	JOIN_APPROVAL_REQUESTED = "join-approval-requested",
+	JOIN_APPROVAL_DECISION = "join-approval-decision",
+	JOIN_REQUEST_RESOLVED = "join-request-resolved",
 	USER_JOINED = "user-joined",
 	USER_UPDATED = "user-updated",
 	USER_DISCONNECTED = "user-disconnected",

@@ -46,7 +46,7 @@ export const useFileSystem = (): FileContextType => {
 
 function FileContextProvider({ children }: { children: ReactNode }) {
     const { socket } = useSocket()
-    const { drawingData, status, currentUser } = useAppContext()
+    const { drawingData, status, currentUser, autoSaveEnabled } = useAppContext()
     const [initialFileState] = useState(getInitialFileState)
 
     const [fileStructure, setFileStructure] = useState<FileSystemItem>(
@@ -91,6 +91,40 @@ function FileContextProvider({ children }: { children: ReactNode }) {
         },
         []
     )
+
+    const mergeActiveFileIntoStructure = useCallback(
+        (
+            structure: FileSystemItem,
+            currentActiveFile: FileSystemItem | null,
+        ) => {
+            if (!currentActiveFile || currentActiveFile.type !== "file") return structure
+            return traverseAndUpdate(structure, (item) =>
+                item.type === "file" && item.id === currentActiveFile.id
+                    ? { ...item, content: currentActiveFile.content || "" }
+                    : item,
+            ) as FileSystemItem
+        },
+        [traverseAndUpdate],
+    )
+
+    const saveWorkspaceNow = useCallback(() => {
+        if (status !== USER_STATUS.JOINED || !currentUser.roomId) {
+            toast.error("Join a room to save workspace")
+            return
+        }
+
+        socket.emit(SocketEvent.WORKSPACE_SYNC, {
+            fileStructure: mergeActiveFileIntoStructure(fileStructure, activeFile),
+        })
+        toast.success("Workspace saved")
+    }, [
+        activeFile,
+        currentUser.roomId,
+        fileStructure,
+        mergeActiveFileIntoStructure,
+        socket,
+        status,
+    ])
 
     // Toggle directory open/close state
     const toggleDirectory = useCallback((dirId: Id) => {
@@ -430,6 +464,12 @@ function FileContextProvider({ children }: { children: ReactNode }) {
                         : file,
                 )
             )
+
+            setActiveFile(prev =>
+                prev?.id === fileId
+                    ? { ...prev, content: newContent, contentEncoding: "utf8" }
+                    : prev
+            )
         },
         [traverseAndUpdate]
     )
@@ -586,19 +626,7 @@ function FileContextProvider({ children }: { children: ReactNode }) {
 
     // Keep the server workspace synchronized with the current file tree.
     useEffect(() => {
-        if (status !== USER_STATUS.JOINED || !currentUser.roomId) return
-
-        const mergeActiveFileIntoStructure = (
-            structure: FileSystemItem,
-            currentActiveFile: FileSystemItem | null,
-        ) => {
-            if (!currentActiveFile || currentActiveFile.type !== "file") return structure
-            return traverseAndUpdate(structure, (item) =>
-                item.type === "file" && item.id === currentActiveFile.id
-                    ? { ...item, content: currentActiveFile.content || "" }
-                    : item,
-            ) as FileSystemItem
-        }
+        if (status !== USER_STATUS.JOINED || !currentUser.roomId || !autoSaveEnabled) return
 
         const timeout = setTimeout(() => {
             socket.emit(SocketEvent.WORKSPACE_SYNC, {
@@ -611,9 +639,10 @@ function FileContextProvider({ children }: { children: ReactNode }) {
         activeFile,
         currentUser.roomId,
         fileStructure,
+        autoSaveEnabled,
+        mergeActiveFileIntoStructure,
         socket,
         status,
-        traverseAndUpdate,
     ])
 
     const value = useMemo(
@@ -636,6 +665,7 @@ function FileContextProvider({ children }: { children: ReactNode }) {
             updateFileContent,
             renameFile,
             deleteFile,
+            saveWorkspaceNow,
             downloadFilesAndFolders,
         }),
         [
@@ -656,6 +686,7 @@ function FileContextProvider({ children }: { children: ReactNode }) {
             updateFileContent,
             renameFile,
             deleteFile,
+            saveWorkspaceNow,
             downloadFilesAndFolders,
         ]
     )

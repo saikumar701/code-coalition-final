@@ -20,7 +20,9 @@ const Users = () => {
                     ></div>
                     <p className="truncate text-sm font-medium text-[var(--ui-text-primary)]">
                         {user.username}
-                        {user.username === currentUser?.username && " (You)"}
+                        {user.username === currentUser?.username && user.isAdmin && " (You, Admin)"}
+                        {user.username === currentUser?.username && !user.isAdmin && " (You)"}
+                        {user.username !== currentUser?.username && user.isAdmin && " (Admin)"}
                     </p>
                 </div>
             ))}

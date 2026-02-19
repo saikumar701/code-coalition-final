@@ -1,5 +1,9 @@
 import axiosInstance from "@/api/pistonApi"
-import { Language, RunContext as RunContextType } from "@/types/run"
+import {
+    Language,
+    RunContext as RunContextType,
+    RunDiagnostic,
+} from "@/types/run"
 import langMap from "lang-map"
 import {
     ReactNode,
@@ -53,6 +57,110 @@ interface RunnableFile {
     name: string
     mimeType?: string
     content?: string
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function selectDiagnosticMessage(lines: string[], lineIndex: number): string {
+    const currentLine = (lines[lineIndex] || "").trim()
+    if (/(error|exception|traceback|syntax)/i.test(currentLine)) {
+        return currentLine
+    }
+
+    for (let offset = 1; offset <= 2; offset++) {
+        const nextLine = (lines[lineIndex + offset] || "").trim()
+        if (/(error|exception|traceback|syntax)/i.test(nextLine)) {
+            return nextLine
+        }
+    }
+
+    const fallback =
+        [...lines]
+            .reverse()
+            .find((line) => /(error|exception|traceback|syntax)/i.test(line)) || ""
+    return fallback.trim() || currentLine || "Runtime error"
+}
+
+function parseRuntimeDiagnostics(
+    output: string,
+    fileName: string,
+): RunDiagnostic[] {
+    const lines = output.split(/\r?\n/)
+    const diagnostics: RunDiagnostic[] = []
+    const uniqueKeys = new Set<string>()
+    const escapedFileName = escapeRegExp(fileName.trim())
+
+    const pushDiagnostic = (
+        line: number,
+        column: number | undefined,
+        message: string,
+    ) => {
+        if (!Number.isFinite(line) || line <= 0) return
+        const normalizedColumn =
+            typeof column === "number" && Number.isFinite(column) && column > 0
+                ? column
+                : undefined
+        const normalizedMessage = message.trim() || "Runtime error"
+        const key = `${line}:${normalizedColumn || 0}:${normalizedMessage}`
+        if (uniqueKeys.has(key)) return
+        uniqueKeys.add(key)
+        diagnostics.push({
+            line,
+            column: normalizedColumn,
+            message: normalizedMessage,
+        })
+    }
+
+    lines.forEach((rawLine, index) => {
+        const line = rawLine.trim()
+        if (!line) return
+
+        const message = selectDiagnosticMessage(lines, index)
+
+        // Patterns like: file.py:12:8 ...
+        const fileWithColumnMatch = line.match(
+            new RegExp(`${escapedFileName}:(\\d+):(\\d+)`, "i"),
+        )
+        if (fileWithColumnMatch) {
+            pushDiagnostic(
+                Number(fileWithColumnMatch[1]),
+                Number(fileWithColumnMatch[2]),
+                message,
+            )
+            return
+        }
+
+        // Patterns like: file.py:12 ...
+        const fileLineMatch = line.match(
+            new RegExp(`${escapedFileName}:(\\d+)`, "i"),
+        )
+        if (fileLineMatch) {
+            pushDiagnostic(Number(fileLineMatch[1]), undefined, message)
+            return
+        }
+
+        // Python traceback style: File ".../file.py", line 12
+        const pythonTracebackMatch = line.match(
+            new RegExp(
+                `File\\s+"[^"]*${escapedFileName}",\\s*line\\s+(\\d+)`,
+                "i",
+            ),
+        )
+        if (pythonTracebackMatch) {
+            pushDiagnostic(Number(pythonTracebackMatch[1]), undefined, message)
+            return
+        }
+
+        // Generic: line 12
+        const genericLineMatch = line.match(/\bline\s+(\d+)\b/i)
+        if (genericLineMatch && /(error|exception|traceback|syntax)/i.test(line)) {
+            pushDiagnostic(Number(genericLineMatch[1]), undefined, message)
+        }
+    })
+
+    return diagnostics.slice(0, 25)
 }
 
 function normalizeValue(value: string): string {
@@ -210,6 +318,8 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
     const [outputMode, setOutputMode] = useState<"text" | "html">("text")
     const [isRunning, setIsRunning] = useState<boolean>(false)
     const [hasRunError, setHasRunError] = useState<boolean>(false)
+    const [diagnostics, setDiagnostics] = useState<RunDiagnostic[]>([])
+    const [diagnosticFileId, setDiagnosticFileId] = useState<string | null>(null)
     const [supportedLanguages, setSupportedLanguages] = useState<Language[]>([])
     const [selectedLanguage, setSelectedLanguage] = useState<Language>(EMPTY_LANGUAGE)
 
@@ -298,6 +408,8 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
 
             setIsRunning(true)
             setHasRunError(false)
+            setDiagnostics([])
+            setDiagnosticFileId(activeFile.id)
             setOutputMode("text")
             const { language, version } = resolvedLanguage
 
@@ -308,11 +420,14 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
                 stdin: input,
             })
             if (response.data.run.stderr) {
-                setOutput(response.data.run.stderr)
+                const stderrOutput = String(response.data.run.stderr)
+                setOutput(stderrOutput)
                 setHasRunError(true)
+                setDiagnostics(parseRuntimeDiagnostics(stderrOutput, activeFile.name))
             } else {
                 setOutput(response.data.run.stdout)
                 setHasRunError(false)
+                setDiagnostics([])
             }
             setOutputMode("text")
             setIsRunning(false)
@@ -329,6 +444,8 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
             setOutput(errorMessage)
             setOutputMode("text")
             setHasRunError(true)
+            setDiagnostics([])
+            setDiagnosticFileId(activeFile.id)
             setIsRunning(false)
             toast.dismiss()
             toast.error("Failed to run the code")
@@ -343,6 +460,8 @@ const RunCodeContextProvider = ({ children }: { children: ReactNode }) => {
                 outputMode,
                 isRunning,
                 hasRunError,
+                diagnostics,
+                diagnosticFileId,
                 supportedLanguages,
                 selectedLanguage,
                 setSelectedLanguage,

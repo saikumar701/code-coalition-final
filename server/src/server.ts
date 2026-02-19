@@ -12,6 +12,11 @@ import fs from "fs"
 import fsPromises from "fs/promises"
 import { randomBytes } from "crypto"
 import { spawn } from "child_process"
+import {
+	initializeRoomSnapshotStore,
+	loadRoomSnapshot,
+	saveRoomSnapshot,
+} from "./services/roomSnapshotStore"
 
 const loadServerEnv = () => {
 	const envPaths = [
@@ -25,6 +30,7 @@ const loadServerEnv = () => {
 }
 
 loadServerEnv()
+void initializeRoomSnapshotStore()
 
 const app = express()
 
@@ -46,11 +52,18 @@ const io = new Server(server, {
 let userSocketMap: User[] = []
 const ptyProcess = new Map<SocketId, pty.IPty>()
 const shell = os.platform() === "win32" ? "powershell.exe" : "bash"
-const workspaceRoot = path.resolve(process.cwd(), ".workspaces")
+const isWorkspaceDiskSyncEnabled =
+	(process.env.WORKSPACE_DISK_SYNC || "").trim().toLowerCase() === "true"
+const workspaceRoot = isWorkspaceDiskSyncEnabled
+	? path.resolve(process.cwd(), ".workspaces")
+	: path.join(os.tmpdir(), "code-coalition-workspaces")
 const roomFileTrees = new Map<string, WorkspaceFileSystemItem>()
 const roomTrackedPaths = new Map<string, Set<string>>()
 const roomSyncTimers = new Map<string, NodeJS.Timeout>()
 const roomScreenShareMap = new Map<string, ScreenShareInfo>()
+const roomAdminSocketMap = new Map<string, SocketId>()
+const pendingJoinRequestMap = new Map<SocketId, PendingJoinRequest>()
+const approvedRoomSessions = new Map<string, Map<string, ApprovedSessionRecord>>()
 const maxFileShareEnvValue = Number(process.env.FILE_SHARE_MAX_SIZE_MB || "20")
 const maxFileShareSizeMb =
 	Number.isFinite(maxFileShareEnvValue) && maxFileShareEnvValue > 0
@@ -190,9 +203,40 @@ interface LocalCommandCandidate {
 	getArgs: (filePath: string) => string[]
 }
 
+type JoinMode = "create" | "join"
+
+interface JoinRequestPayload {
+	roomId?: string
+	username?: string
+	sessionId?: string
+	mode?: JoinMode
+}
+
+interface JoinApprovalDecisionPayload {
+	requesterSocketId?: string
+	approved?: boolean
+}
+
+interface PendingJoinRequest {
+	requestId: string
+	roomId: string
+	username: string
+	requesterSocketId: SocketId
+	sessionId: string
+	requestedAt: number
+}
+
+interface ApprovedSessionRecord {
+	username: string
+	isAdmin: boolean
+}
+
 if (!fs.existsSync(workspaceRoot)) {
 	fs.mkdirSync(workspaceRoot, { recursive: true })
 }
+console.log(
+	`Workspace mirror mode: ${isWorkspaceDiskSyncEnabled ? "project-disk" : "temp-only"} (${workspaceRoot})`,
+)
 
 function sanitizeRoomId(roomId: string): string {
 	return roomId.replace(/[^a-zA-Z0-9_-]/g, "_")
@@ -297,6 +341,7 @@ function getWorkspaceEntries(children: WorkspaceFileSystemItem[], parentPath = "
 async function synchronizeWorkspaceToDisk(roomId: string): Promise<void> {
 	const fileTree = roomFileTrees.get(roomId)
 	if (!fileTree || fileTree.type !== "directory") return
+	await saveRoomSnapshot(roomId, fileTree)
 
 	const workspacePath = getRoomWorkspacePath(roomId)
 	const nextEntries = getWorkspaceEntries(fileTree.children || [])
@@ -379,6 +424,180 @@ function getUserBySocketId(socketId: SocketId): User | null {
 		return null
 	}
 	return user
+}
+
+function normalizeJoinMode(mode: JoinMode | undefined): JoinMode {
+	return mode === "create" ? "create" : "join"
+}
+
+function toPendingJoinRequestEventPayload(request: PendingJoinRequest) {
+	return {
+		requestId: request.requestId,
+		roomId: request.roomId,
+		username: request.username,
+		requesterSocketId: request.requesterSocketId,
+	}
+}
+
+function getPendingJoinRequestsForRoom(roomId: string): PendingJoinRequest[] {
+	return [...pendingJoinRequestMap.values()].filter((request) => request.roomId === roomId)
+}
+
+function getRoomAdminUser(roomId: string): User | null {
+	const mappedAdminSocketId = roomAdminSocketMap.get(roomId) || ""
+	const roomUsers = getUsersInRoom(roomId)
+
+	if (mappedAdminSocketId) {
+		const mappedAdmin = roomUsers.find((user) => user.socketId === mappedAdminSocketId) || null
+		if (mappedAdmin) {
+			return mappedAdmin
+		}
+		roomAdminSocketMap.delete(roomId)
+	}
+
+	const discoveredAdmin = roomUsers.find((user) => user.isAdmin) || null
+	if (discoveredAdmin) {
+		roomAdminSocketMap.set(roomId, discoveredAdmin.socketId)
+	}
+	return discoveredAdmin
+}
+
+function rememberApprovedSession(
+	roomId: string,
+	sessionId: string,
+	record: ApprovedSessionRecord,
+) {
+	if (!sessionId) return
+	const sessionsForRoom = approvedRoomSessions.get(roomId) || new Map<string, ApprovedSessionRecord>()
+	sessionsForRoom.set(sessionId, record)
+	approvedRoomSessions.set(roomId, sessionsForRoom)
+}
+
+function getApprovedSession(roomId: string, sessionId: string): ApprovedSessionRecord | null {
+	if (!sessionId) return null
+	return approvedRoomSessions.get(roomId)?.get(sessionId) || null
+}
+
+function emitPendingJoinRequestToAdmin(roomId: string, request: PendingJoinRequest) {
+	const adminUser = getRoomAdminUser(roomId)
+	if (!adminUser) return
+	io.to(adminUser.socketId).emit(SocketEvent.JOIN_APPROVAL_REQUESTED, {
+		request: toPendingJoinRequestEventPayload(request),
+	})
+}
+
+function emitJoinRequestResolvedToAdmin(roomId: string, requesterSocketId: SocketId) {
+	const adminUser = getRoomAdminUser(roomId)
+	if (!adminUser) return
+	io.to(adminUser.socketId).emit(SocketEvent.JOIN_REQUEST_RESOLVED, { requesterSocketId })
+}
+
+function removePendingJoinRequest(requesterSocketId: SocketId): PendingJoinRequest | null {
+	const pendingRequest = pendingJoinRequestMap.get(requesterSocketId) || null
+	if (!pendingRequest) return null
+
+	pendingJoinRequestMap.delete(requesterSocketId)
+	emitJoinRequestResolvedToAdmin(pendingRequest.roomId, requesterSocketId)
+	return pendingRequest
+}
+
+function rejectPendingJoinRequestsForRoom(roomId: string, reason: string) {
+	const roomPendingRequests = getPendingJoinRequestsForRoom(roomId)
+	roomPendingRequests.forEach((request) => {
+		pendingJoinRequestMap.delete(request.requesterSocketId)
+		io.to(request.requesterSocketId).emit(SocketEvent.JOIN_REJECTED, {
+			message: reason,
+		})
+	})
+}
+
+function findFirstFileInTree(node: WorkspaceFileSystemItem): WorkspaceFileSystemItem | null {
+	if (node.type === "file") return node
+	const children = node.children || []
+	for (const child of children) {
+		const nested = findFirstFileInTree(child)
+		if (nested) return nested
+	}
+	return null
+}
+
+function getWorkspaceSyncPayload(fileStructure: WorkspaceFileSystemItem) {
+	const directChildFiles = (fileStructure.children || []).filter(
+		(item) => item.type === "file",
+	)
+	const firstFile = directChildFiles[0] || findFirstFileInTree(fileStructure)
+	return {
+		fileStructure,
+		openFiles: firstFile ? [firstFile] : [],
+		activeFile: firstFile || null,
+	}
+}
+
+async function acceptUserIntoRoom({
+	socket,
+	roomId,
+	username,
+	sessionId,
+	isAdmin,
+}: {
+	socket: any
+	roomId: string
+	username: string
+	sessionId: string
+	isAdmin: boolean
+}) {
+	let roomSnapshot = roomFileTrees.get(roomId) || null
+	if (!roomSnapshot) {
+		const snapshotFromDb = await loadRoomSnapshot<WorkspaceFileSystemItem>(roomId)
+		if (snapshotFromDb && snapshotFromDb.type === "directory") {
+			roomSnapshot = snapshotFromDb
+			roomFileTrees.set(roomId, snapshotFromDb)
+			await synchronizeWorkspaceToDisk(roomId)
+		}
+	}
+
+	userSocketMap = userSocketMap.filter((u) => u.socketId !== socket.id)
+	socket.data.joinSessionId = sessionId
+
+	const user: User = {
+		username,
+		roomId,
+		isAdmin,
+		status: USER_CONNECTION_STATUS.ONLINE,
+		cursorPosition: 0,
+		typing: false,
+		socketId: socket.id,
+		currentFile: null,
+	}
+
+	userSocketMap.push(user)
+	if (isAdmin) {
+		roomAdminSocketMap.set(roomId, socket.id)
+	}
+	rememberApprovedSession(roomId, sessionId, {
+		username,
+		isAdmin,
+	})
+
+	socket.join(roomId)
+	const roomWorkspacePath = getRoomWorkspacePath(roomId)
+	resetPtyForSocket(socket, roomWorkspacePath)
+
+	socket.broadcast.to(roomId).emit(SocketEvent.USER_JOINED, { user })
+	const users = getUsersInRoom(roomId)
+
+	io.to(socket.id).emit(SocketEvent.JOIN_ACCEPTED, { user, users })
+	const activeScreenShare = roomScreenShareMap.get(roomId)
+	io.to(socket.id).emit(SocketEvent.SCREEN_SHARE_STATUS, {
+		sharerSocketId: activeScreenShare?.socketId || null,
+		sharerUsername: activeScreenShare?.username || null,
+	})
+	if (roomSnapshot?.type === "directory") {
+		io.to(socket.id).emit(
+			SocketEvent.SYNC_FILE_STRUCTURE,
+			getWorkspaceSyncPayload(roomSnapshot),
+		)
+	}
 }
 
 function getBase64DecodedSize(base64Value: string): number {
@@ -839,88 +1058,204 @@ io.on("connection", (socket) => {
 	}
 
 	// Handle user actions
-	socket.on(SocketEvent.JOIN_REQUEST, ({ roomId, username, sessionId }) => {
-		const normalizedRoomId = typeof roomId === "string" ? roomId.trim() : ""
-		const normalizedUsername = typeof username === "string" ? username.trim() : ""
+	socket.on(SocketEvent.JOIN_REQUEST, async (payload: JoinRequestPayload) => {
+		const normalizedRoomId =
+			typeof payload?.roomId === "string" ? payload.roomId.trim() : ""
+		const normalizedUsername =
+			typeof payload?.username === "string" ? payload.username.trim() : ""
 		const normalizedSessionId =
-			typeof sessionId === "string" ? sessionId.trim() : ""
+			typeof payload?.sessionId === "string" ? payload.sessionId.trim() : ""
+		const normalizedMode = normalizeJoinMode(payload?.mode)
+
 		console.log("JOIN_REQUEST:", {
 			socketId: socket.id,
 			roomId: normalizedRoomId,
 			username: normalizedUsername,
+			mode: normalizedMode,
 		})
 
 		if (!normalizedRoomId || !normalizedUsername) {
+			io.to(socket.id).emit(SocketEvent.ROOM_JOIN_ERROR, {
+				message: "Room ID and username are required.",
+			})
+			return
+		}
+
+		const existingPendingRequestWithUsername = getPendingJoinRequestsForRoom(
+			normalizedRoomId,
+		).find(
+			(request) =>
+				request.username === normalizedUsername &&
+				request.requesterSocketId !== socket.id,
+		)
+
+		if (existingPendingRequestWithUsername) {
 			io.to(socket.id).emit(SocketEvent.USERNAME_EXISTS)
 			return
 		}
 
 		const existingUser = getUsersInRoom(normalizedRoomId).find(
-			(u) => u.username === normalizedUsername
+			(user) => user.username === normalizedUsername,
 		)
+		if (existingUser && existingUser.socketId === socket.id) {
+			const users = getUsersInRoom(normalizedRoomId)
+			io.to(socket.id).emit(SocketEvent.JOIN_ACCEPTED, { user: existingUser, users })
+			return
+		}
 
-		if (existingUser) {
-			if (existingUser.socketId !== socket.id) {
-				const existingSocket = io.sockets.sockets.get(existingUser.socketId)
-				const existingSessionId =
-					typeof existingSocket?.data?.joinSessionId === "string"
-						? existingSocket.data.joinSessionId
-						: ""
-				const canHandoff =
-					normalizedSessionId.length > 0 &&
-					existingSessionId.length > 0 &&
-					existingSessionId === normalizedSessionId
+		if (existingUser && existingUser.socketId !== socket.id) {
+			const existingSocket = io.sockets.sockets.get(existingUser.socketId)
+			const existingSessionId =
+				typeof existingSocket?.data?.joinSessionId === "string"
+					? existingSocket.data.joinSessionId
+					: ""
+			const canHandoff =
+				normalizedSessionId.length > 0 &&
+				existingSessionId.length > 0 &&
+				existingSessionId === normalizedSessionId
 
-				if (!canHandoff) {
-					io.to(socket.id).emit(SocketEvent.USERNAME_EXISTS)
-					return
-				}
+			if (!canHandoff) {
+				io.to(socket.id).emit(SocketEvent.USERNAME_EXISTS)
+				return
+			}
 
-				// Refresh reconnect handoff: move identity from old socket to the new socket.
-				userSocketMap = userSocketMap.filter(
-					(u) => u.socketId !== existingUser.socketId
-				)
-				if (existingSocket) {
-					existingSocket.leave(normalizedRoomId)
-					existingSocket.disconnect(true)
-				}
+			userSocketMap = userSocketMap.filter((user) => user.socketId !== existingUser.socketId)
+			if (existingSocket) {
+				existingSocket.leave(normalizedRoomId)
+				existingSocket.disconnect(true)
+			}
+
+			removePendingJoinRequest(socket.id)
+			await acceptUserIntoRoom({
+				socket,
+				roomId: normalizedRoomId,
+				username: normalizedUsername,
+				sessionId: normalizedSessionId,
+				isAdmin: existingUser.isAdmin,
+			})
+			return
+		}
+
+		const approvedSession = getApprovedSession(normalizedRoomId, normalizedSessionId)
+		if (approvedSession && approvedSession.username === normalizedUsername) {
+			removePendingJoinRequest(socket.id)
+			await acceptUserIntoRoom({
+				socket,
+				roomId: normalizedRoomId,
+				username: normalizedUsername,
+				sessionId: normalizedSessionId,
+				isAdmin: approvedSession.isAdmin,
+			})
+			return
+		}
+
+		if (normalizedMode === "create") {
+			const users = getUsersInRoom(normalizedRoomId)
+			if (users.length > 0) {
+				io.to(socket.id).emit(SocketEvent.ROOM_JOIN_ERROR, {
+					message: "Room already exists. Use Join Room instead.",
+				})
+				return
+			}
+
+			removePendingJoinRequest(socket.id)
+			await acceptUserIntoRoom({
+				socket,
+				roomId: normalizedRoomId,
+				username: normalizedUsername,
+				sessionId: normalizedSessionId,
+				isAdmin: true,
+			})
+			return
+		}
+
+		const usersInRoom = getUsersInRoom(normalizedRoomId)
+		if (usersInRoom.length === 0) {
+			io.to(socket.id).emit(SocketEvent.ROOM_JOIN_ERROR, {
+				message: "Room not found. Ask the admin to create the room first.",
+			})
+			return
+		}
+
+		let adminUser = getRoomAdminUser(normalizedRoomId)
+		if (!adminUser && usersInRoom.length > 0) {
+			const nextAdmin = usersInRoom[0]
+			userSocketMap = userSocketMap.map((user) =>
+				user.socketId === nextAdmin.socketId ? { ...user, isAdmin: true } : user,
+			)
+			adminUser = getUserBySocketId(nextAdmin.socketId)
+			roomAdminSocketMap.set(normalizedRoomId, nextAdmin.socketId)
+			if (adminUser) {
+				io.to(normalizedRoomId).emit(SocketEvent.USER_UPDATED, { user: adminUser })
 			}
 		}
 
-		// Ensure one user record per active socket.
-		userSocketMap = userSocketMap.filter((u) => u.socketId !== socket.id)
-		socket.data.joinSessionId = normalizedSessionId
-
-		const user = {
-			username: normalizedUsername,
-			roomId: normalizedRoomId,
-			status: USER_CONNECTION_STATUS.ONLINE,
-			cursorPosition: 0,
-			typing: false,
-			socketId: socket.id,
-			currentFile: null,
+		if (!adminUser) {
+			io.to(socket.id).emit(SocketEvent.ROOM_JOIN_ERROR, {
+				message: "No admin is available in this room right now.",
+			})
+			return
 		}
-		userSocketMap.push(user)
-		socket.join(normalizedRoomId)
-		const roomWorkspacePath = getRoomWorkspacePath(normalizedRoomId)
-		resetPtyForSocket(socket, roomWorkspacePath)
-		socket.broadcast.to(normalizedRoomId).emit(SocketEvent.USER_JOINED, { user })
-		const users = getUsersInRoom(normalizedRoomId)
-		console.log("JOIN_ACCEPTED:", {
-			socketId: socket.id,
+
+		removePendingJoinRequest(socket.id)
+		const pendingJoinRequest: PendingJoinRequest = {
+			requestId: randomBytes(8).toString("hex"),
 			roomId: normalizedRoomId,
 			username: normalizedUsername,
-			totalUsersInRoom: users.length,
-		})
-		io.to(socket.id).emit(SocketEvent.JOIN_ACCEPTED, { user, users })
-		const activeScreenShare = roomScreenShareMap.get(normalizedRoomId)
-		io.to(socket.id).emit(SocketEvent.SCREEN_SHARE_STATUS, {
-			sharerSocketId: activeScreenShare?.socketId || null,
-			sharerUsername: activeScreenShare?.username || null,
-		})
+			requesterSocketId: socket.id,
+			sessionId: normalizedSessionId,
+			requestedAt: Date.now(),
+		}
+		pendingJoinRequestMap.set(socket.id, pendingJoinRequest)
+
+		io.to(socket.id).emit(SocketEvent.JOIN_PENDING_APPROVAL)
+		emitPendingJoinRequestToAdmin(normalizedRoomId, pendingJoinRequest)
 	})
 
+	socket.on(
+		SocketEvent.JOIN_APPROVAL_DECISION,
+		async (payload: JoinApprovalDecisionPayload) => {
+			const approver = getUserBySocketId(socket.id)
+			if (!approver || !approver.isAdmin) return
+
+			const requesterSocketId =
+				typeof payload?.requesterSocketId === "string"
+					? payload.requesterSocketId
+					: ""
+			const approved = Boolean(payload?.approved)
+			if (!requesterSocketId) return
+
+			const pendingJoinRequest = pendingJoinRequestMap.get(requesterSocketId)
+			if (!pendingJoinRequest || pendingJoinRequest.roomId !== approver.roomId) {
+				return
+			}
+
+			pendingJoinRequestMap.delete(requesterSocketId)
+			emitJoinRequestResolvedToAdmin(pendingJoinRequest.roomId, requesterSocketId)
+
+			const requesterSocket = io.sockets.sockets.get(requesterSocketId)
+			if (!requesterSocket) return
+
+			if (!approved) {
+				io.to(requesterSocketId).emit(SocketEvent.JOIN_REJECTED, {
+					message: "Admin rejected your join request.",
+				})
+				return
+			}
+
+			await acceptUserIntoRoom({
+				socket: requesterSocket,
+				roomId: pendingJoinRequest.roomId,
+				username: pendingJoinRequest.username,
+				sessionId: pendingJoinRequest.sessionId,
+				isAdmin: false,
+			})
+		},
+	)
+
 	socket.on("disconnecting", () => {
+		removePendingJoinRequest(socket.id)
+
 		const user = userSocketMap.find((u) => u.socketId === socket.id) || null
 		if (user) {
 			const roomId = user.roomId
@@ -936,12 +1271,61 @@ io.on("connection", (socket) => {
 				.emit(SocketEvent.USER_DISCONNECTED, { user })
 			userSocketMap = userSocketMap.filter((u) => u.socketId !== socket.id)
 			socket.leave(roomId)
+
+			if (user.isAdmin) {
+				const remainingUsers = getUsersInRoom(roomId)
+				if (remainingUsers.length > 0) {
+					const nextAdminSocketId = remainingUsers[0].socketId
+					userSocketMap = userSocketMap.map((roomUser) =>
+						roomUser.socketId === nextAdminSocketId
+							? { ...roomUser, isAdmin: true }
+							: roomUser,
+					)
+					roomAdminSocketMap.set(roomId, nextAdminSocketId)
+					const nextAdminUser = getUserBySocketId(nextAdminSocketId)
+					if (nextAdminUser) {
+						const nextAdminSocket = io.sockets.sockets.get(nextAdminSocketId)
+						const nextAdminSessionId =
+							typeof nextAdminSocket?.data?.joinSessionId === "string"
+								? nextAdminSocket.data.joinSessionId
+								: ""
+						rememberApprovedSession(roomId, nextAdminSessionId, {
+							username: nextAdminUser.username,
+							isAdmin: true,
+						})
+						io.to(roomId).emit(SocketEvent.USER_UPDATED, { user: nextAdminUser })
+						getPendingJoinRequestsForRoom(roomId).forEach((request) => {
+							emitPendingJoinRequestToAdmin(roomId, request)
+						})
+					}
+				} else {
+					roomAdminSocketMap.delete(roomId)
+				}
+			}
+
 			if (getUsersInRoom(roomId).length === 0) {
+				rejectPendingJoinRequestsForRoom(
+					roomId,
+					"Room was closed because the admin is no longer connected.",
+				)
+				roomAdminSocketMap.delete(roomId)
+				approvedRoomSessions.delete(roomId)
 				roomScreenShareMap.delete(roomId)
+				roomFileTrees.delete(roomId)
+				roomTrackedPaths.delete(roomId)
 				const timer = roomSyncTimers.get(roomId)
 				if (timer) {
 					clearTimeout(timer)
 					roomSyncTimers.delete(roomId)
+				}
+				if (!isWorkspaceDiskSyncEnabled) {
+					const roomWorkspacePath = path.join(
+						workspaceRoot,
+						sanitizeRoomId(roomId),
+					)
+					void fsPromises
+						.rm(roomWorkspacePath, { recursive: true, force: true })
+						.catch(() => {})
 				}
 			}
 		}

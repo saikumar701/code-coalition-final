@@ -4,7 +4,7 @@ import {
     SocketEvent,
     SocketId,
 } from "@/types/socket"
-import { RemoteUser, USER_STATUS, User } from "@/types/user"
+import { PendingJoinRequest, RemoteUser, USER_STATUS, User } from "@/types/user"
 import {
     ReactNode,
     createContext,
@@ -38,11 +38,31 @@ const upsertUser = (users: RemoteUser[], user: RemoteUser): RemoteUser[] => {
     return updatedUsers
 }
 
+const upsertPendingRequest = (
+    requests: PendingJoinRequest[],
+    request: PendingJoinRequest,
+): PendingJoinRequest[] => {
+    const existingIndex = requests.findIndex(
+        (pendingRequest) =>
+            pendingRequest.requesterSocketId === request.requesterSocketId,
+    )
+    if (existingIndex === -1) return [...requests, request]
+
+    const updatedRequests = [...requests]
+    updatedRequests[existingIndex] = request
+    return updatedRequests
+}
+
+const getJoinRequestToastId = (requesterSocketId: string) =>
+    `join-request-${requesterSocketId}`
+
 const SocketProvider = ({ children }: { children: ReactNode }) => {
     const {
         setUsers,
         setStatus,
+        currentUser,
         setCurrentUser,
+        setPendingJoinRequests,
         drawingData,
         setDrawingData,
     } = useAppContext()
@@ -69,15 +89,41 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
 
     const handleUsernameExist = useCallback(() => {
         toast.dismiss()
+        setPendingJoinRequests([])
         setStatus(USER_STATUS.INITIAL)
         toast.error(
             "The username you chose already exists in the room. Please choose a different username.",
         )
+    }, [setPendingJoinRequests, setStatus])
+
+    const handleRoomJoinError = useCallback(
+        ({ message }: { message?: string }) => {
+            toast.dismiss()
+            setPendingJoinRequests([])
+            setStatus(USER_STATUS.INITIAL)
+            toast.error(message || "Unable to join the room.")
+        },
+        [setPendingJoinRequests, setStatus],
+    )
+
+    const handleJoinPendingApproval = useCallback(() => {
+        setStatus(USER_STATUS.PENDING_APPROVAL)
+        toast.loading("Waiting for admin approval...", { id: "join-room" })
     }, [setStatus])
+
+    const handleJoinRejected = useCallback(
+        ({ message }: { message?: string }) => {
+            toast.dismiss()
+            setStatus(USER_STATUS.INITIAL)
+            toast.error(message || "Admin rejected your join request.")
+        },
+        [setStatus],
+    )
 
     const handleJoiningAccept = useCallback(
         ({ user, users }: { user: User; users: RemoteUser[] }) => {
             setCurrentUser(user)
+            setPendingJoinRequests([])
             setUsers(users.reduce<RemoteUser[]>((acc, roomUser) => upsertUser(acc, roomUser), []))
             toast.dismiss()
             setStatus(USER_STATUS.JOINED)
@@ -86,7 +132,65 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
                 toast.loading("Syncing data, please wait...")
             }
         },
-        [setCurrentUser, setStatus, setUsers],
+        [setCurrentUser, setPendingJoinRequests, setStatus, setUsers],
+    )
+
+    const handleJoinApprovalRequested = useCallback(
+        ({ request }: { request?: PendingJoinRequest }) => {
+            if (!request) return
+            setPendingJoinRequests((prevRequests) =>
+                upsertPendingRequest(prevRequests, request),
+            )
+            const toastId = getJoinRequestToastId(request.requesterSocketId)
+            toast.dismiss(toastId)
+            toast(
+                `${request.username} wants to join room ${request.roomId}. Open Users panel to approve or reject.`,
+                {
+                    id: toastId,
+                    duration: 15000,
+                },
+            )
+        },
+        [setPendingJoinRequests],
+    )
+
+    const handleJoinRequestResolved = useCallback(
+        ({ requesterSocketId }: { requesterSocketId?: string }) => {
+            if (!requesterSocketId) return
+            toast.dismiss(getJoinRequestToastId(requesterSocketId))
+            setPendingJoinRequests((prevRequests) =>
+                prevRequests.filter(
+                    (request) =>
+                        request.requesterSocketId !== requesterSocketId,
+                ),
+            )
+        },
+        [setPendingJoinRequests],
+    )
+
+    const handleUserUpdated = useCallback(
+        ({ user }: { user: RemoteUser }) => {
+            if (!user?.socketId || user.socketId !== socket.id) return
+            if (
+                user.username === currentUser.username &&
+                user.roomId === currentUser.roomId &&
+                user.isAdmin === currentUser.isAdmin
+            ) {
+                return
+            }
+            setCurrentUser({
+                username: user.username,
+                roomId: user.roomId,
+                isAdmin: user.isAdmin,
+            })
+        },
+        [
+            currentUser.isAdmin,
+            currentUser.roomId,
+            currentUser.username,
+            setCurrentUser,
+            socket.id,
+        ],
     )
 
     const handleUserJoined = useCallback(
@@ -137,8 +241,14 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
         socket.on("connect_error", handleError)
         socket.on("connect_failed", handleError)
         socket.on(SocketEvent.USERNAME_EXISTS, handleUsernameExist)
+        socket.on(SocketEvent.ROOM_JOIN_ERROR, handleRoomJoinError)
+        socket.on(SocketEvent.JOIN_PENDING_APPROVAL, handleJoinPendingApproval)
+        socket.on(SocketEvent.JOIN_REJECTED, handleJoinRejected)
         socket.on(SocketEvent.JOIN_ACCEPTED, handleJoiningAccept)
+        socket.on(SocketEvent.JOIN_APPROVAL_REQUESTED, handleJoinApprovalRequested)
+        socket.on(SocketEvent.JOIN_REQUEST_RESOLVED, handleJoinRequestResolved)
         socket.on(SocketEvent.USER_JOINED, handleUserJoined)
+        socket.on(SocketEvent.USER_UPDATED, handleUserUpdated)
         socket.on(SocketEvent.USER_DISCONNECTED, handleUserLeft)
         socket.on(SocketEvent.REQUEST_DRAWING, handleRequestDrawing)
         socket.on(SocketEvent.SYNC_DRAWING, handleDrawingSync)
@@ -147,8 +257,20 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
             socket.off("connect_error", handleError)
             socket.off("connect_failed", handleError)
             socket.off(SocketEvent.USERNAME_EXISTS, handleUsernameExist)
+            socket.off(SocketEvent.ROOM_JOIN_ERROR, handleRoomJoinError)
+            socket.off(SocketEvent.JOIN_PENDING_APPROVAL, handleJoinPendingApproval)
+            socket.off(SocketEvent.JOIN_REJECTED, handleJoinRejected)
             socket.off(SocketEvent.JOIN_ACCEPTED, handleJoiningAccept)
+            socket.off(
+                SocketEvent.JOIN_APPROVAL_REQUESTED,
+                handleJoinApprovalRequested,
+            )
+            socket.off(
+                SocketEvent.JOIN_REQUEST_RESOLVED,
+                handleJoinRequestResolved,
+            )
             socket.off(SocketEvent.USER_JOINED, handleUserJoined)
+            socket.off(SocketEvent.USER_UPDATED, handleUserUpdated)
             socket.off(SocketEvent.USER_DISCONNECTED, handleUserLeft)
             socket.off(SocketEvent.REQUEST_DRAWING, handleRequestDrawing)
             socket.off(SocketEvent.SYNC_DRAWING, handleDrawingSync)
@@ -156,12 +278,17 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
     }, [
         handleDrawingSync,
         handleError,
+        handleJoinApprovalRequested,
         handleJoiningAccept,
+        handleJoinPendingApproval,
+        handleJoinRejected,
+        handleJoinRequestResolved,
+        handleRoomJoinError,
+        handleUserUpdated,
         handleUserJoined,
         handleRequestDrawing,
         handleUserLeft,
         handleUsernameExist,
-        setUsers,
         socket,
     ])
 

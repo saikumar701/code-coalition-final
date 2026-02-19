@@ -2,13 +2,15 @@ import { useAppContext } from "@/context/AppContext"
 import { useSocket } from "@/context/SocketContext"
 import { SocketEvent } from "@/types/socket"
 import { USER_STATUS } from "@/types/user"
-import { ChangeEvent, FormEvent, useEffect, useRef } from "react"
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react"
 import { toast } from "react-hot-toast"
 import { useLocation, useNavigate } from "react-router-dom"
 import { v4 as uuidv4 } from "uuid"
 import logo from "@/assets/logo.svg"
 import { Key, User } from "lucide-react"
 import { getClientSessionId } from "@/utils/session"
+
+type JoinMode = "create" | "join"
 
 const FormComponent = () => {
     const location = useLocation()
@@ -17,13 +19,8 @@ const FormComponent = () => {
 
     const usernameRef = useRef<HTMLInputElement | null>(null)
     const joinTimeoutRef = useRef<number | null>(null)
+    const [lastRequestedMode, setLastRequestedMode] = useState<JoinMode>("join")
     const navigate = useNavigate()
-
-    const createNewRoomId = () => {
-        setCurrentUser({ ...currentUser, roomId: uuidv4() })
-        toast.success("Created a new Room Id")
-        usernameRef.current?.focus()
-    }
 
     const handleInputChanges = (e: ChangeEvent<HTMLInputElement>) => {
         const name = e.target.name
@@ -31,9 +28,9 @@ const FormComponent = () => {
         setCurrentUser({ ...currentUser, [name]: value })
     }
 
-    const validateForm = () => {
+    const validateForm = (roomIdValue: string) => {
         const username = currentUser.username.trim()
-        const roomId = currentUser.roomId.trim()
+        const roomId = roomIdValue.trim()
 
         if (username.length === 0) {
             toast.error("Enter your username")
@@ -51,22 +48,38 @@ const FormComponent = () => {
         return true
     }
 
-    const joinRoom = (e: FormEvent<HTMLFormElement>) => {
-        e.preventDefault()
-        if (status === USER_STATUS.ATTEMPTING_JOIN) return
-        if (!validateForm()) return
+    const requestRoomAccess = (mode: JoinMode) => {
+        if (
+            status === USER_STATUS.ATTEMPTING_JOIN ||
+            status === USER_STATUS.PENDING_APPROVAL
+        ) {
+            return
+        }
+
+        const username = currentUser.username.trim()
+        const inputRoomId = currentUser.roomId.trim()
+        const roomId = mode === "create" ? inputRoomId || uuidv4() : inputRoomId
+        if (!validateForm(roomId)) return
 
         const joinPayload = {
-            username: currentUser.username.trim(),
-            roomId: currentUser.roomId.trim(),
+            username,
+            roomId,
             sessionId: getClientSessionId(),
+            mode,
         }
 
         setCurrentUser({
-            username: joinPayload.username,
-            roomId: joinPayload.roomId,
+            username,
+            roomId,
+            isAdmin: false,
         })
-        toast.loading("Joining room...", { id: "join-room" })
+        setLastRequestedMode(mode)
+        toast.loading(
+            mode === "create"
+                ? "Creating room..."
+                : "Requesting to join room...",
+            { id: "join-room" },
+        )
         setStatus(USER_STATUS.ATTEMPTING_JOIN)
 
         if (!socket.connected) {
@@ -81,9 +94,14 @@ const FormComponent = () => {
         joinTimeoutRef.current = window.setTimeout(() => {
             setStatus(USER_STATUS.CONNECTION_FAILED)
             toast.dismiss("join-room")
-            toast.error("Join request timed out. Please try again.")
+            toast.error("Request timed out. Please try again.")
             joinTimeoutRef.current = null
         }, 9000)
+    }
+
+    const joinRoom = (e: FormEvent<HTMLFormElement>) => {
+        e.preventDefault()
+        requestRoomAccess("join")
     }
 
     useEffect(() => {
@@ -116,12 +134,14 @@ const FormComponent = () => {
     }, [currentUser.roomId, currentUser.username, navigate, status])
 
     useEffect(() => {
-        if (status !== USER_STATUS.ATTEMPTING_JOIN) {
+        if (status === USER_STATUS.ATTEMPTING_JOIN) return
+
+        if (joinTimeoutRef.current !== null) {
+            window.clearTimeout(joinTimeoutRef.current)
+            joinTimeoutRef.current = null
+        }
+        if (status !== USER_STATUS.PENDING_APPROVAL) {
             toast.dismiss("join-room")
-            if (joinTimeoutRef.current !== null) {
-                window.clearTimeout(joinTimeoutRef.current)
-                joinTimeoutRef.current = null
-            }
         }
     }, [status])
 
@@ -142,8 +162,8 @@ const FormComponent = () => {
                     </span>
                     <img src={logo} alt="CodeAlong logo" className="h-16 w-auto" />
                     <p className="max-w-sm text-sm text-gray-300">
-                        Enter a room ID or generate a new one to collaborate instantly. Your
-                        session stays in sync across devices.
+                        Create room to become the admin, or join an existing room and wait for
+                        admin approval.
                     </p>
                 </div>
                 <form onSubmit={joinRoom} className="flex w-full flex-col gap-4">
@@ -158,7 +178,10 @@ const FormComponent = () => {
                                 type="text"
                                 name="roomId"
                                 placeholder="e.g. build-together-123"
-                                disabled={status === USER_STATUS.ATTEMPTING_JOIN}
+                                disabled={
+                                    status === USER_STATUS.ATTEMPTING_JOIN ||
+                                    status === USER_STATUS.PENDING_APPROVAL
+                                }
                                 className="w-full rounded-2xl border border-gray-600 bg-gray-700/50 py-3 pl-10 pr-4 text-white placeholder-gray-400 outline-none transition focus:border-teal-500 focus:bg-gray-700/80 focus:shadow-[0_0_0_2px_rgba(13,148,136,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
                                 onChange={handleInputChanges}
                                 value={currentUser.roomId}
@@ -176,7 +199,10 @@ const FormComponent = () => {
                                 type="text"
                                 name="username"
                                 placeholder="Your name"
-                                disabled={status === USER_STATUS.ATTEMPTING_JOIN}
+                                disabled={
+                                    status === USER_STATUS.ATTEMPTING_JOIN ||
+                                    status === USER_STATUS.PENDING_APPROVAL
+                                }
                                 className="w-full rounded-2xl border border-gray-600 bg-gray-700/50 py-3 pl-10 pr-4 text-white placeholder-gray-400 outline-none transition focus:border-teal-500 focus:bg-gray-700/80 focus:shadow-[0_0_0_2px_rgba(13,148,136,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
                                 onChange={handleInputChanges}
                                 value={currentUser.username}
@@ -184,21 +210,38 @@ const FormComponent = () => {
                             />
                         </div>
                     </div>
-                    <button
-                        type="submit"
-                        disabled={status === USER_STATUS.ATTEMPTING_JOIN}
-                        className="mt-2 inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-teal-500 to-teal-400 px-8 py-3 text-base font-semibold text-gray-900 transition-transform hover:scale-105 hover:shadow-[0_20px_45px_-20px_rgba(13,148,136,0.8)] active:scale-100 sm:text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
-                    >
-                        {status === USER_STATUS.ATTEMPTING_JOIN ? "Joining..." : "Join room"}
-                    </button>
+                    <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <button
+                            type="button"
+                            disabled={
+                                status === USER_STATUS.ATTEMPTING_JOIN ||
+                                status === USER_STATUS.PENDING_APPROVAL
+                            }
+                            className="inline-flex w-full items-center justify-center rounded-2xl border border-teal-400/50 bg-teal-500/10 px-6 py-3 text-base font-semibold text-teal-300 transition hover:bg-teal-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => requestRoomAccess("create")}
+                        >
+                            {status === USER_STATUS.ATTEMPTING_JOIN &&
+                            lastRequestedMode === "create"
+                                ? "Creating..."
+                                : "Create Room (Admin)"}
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={
+                                status === USER_STATUS.ATTEMPTING_JOIN ||
+                                status === USER_STATUS.PENDING_APPROVAL
+                            }
+                            className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-teal-500 to-teal-400 px-6 py-3 text-base font-semibold text-gray-900 transition-transform hover:scale-105 hover:shadow-[0_20px_45px_-20px_rgba(13,148,136,0.8)] active:scale-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:scale-100"
+                        >
+                            {status === USER_STATUS.PENDING_APPROVAL
+                                ? "Awaiting Approval..."
+                                : status === USER_STATUS.ATTEMPTING_JOIN &&
+                                    lastRequestedMode === "join"
+                                  ? "Joining..."
+                                  : "Join Room (User)"}
+                        </button>
+                    </div>
                 </form>
-                <button
-                    disabled={status === USER_STATUS.ATTEMPTING_JOIN}
-                    className="text-sm font-medium text-teal-400 transition hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                    onClick={createNewRoomId}
-                >
-                    Generate a unique room ID
-                </button>
             </div>
         </div>
     )

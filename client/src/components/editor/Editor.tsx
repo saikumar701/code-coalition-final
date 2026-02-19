@@ -2,14 +2,17 @@ import { useAppContext } from "@/context/AppContext"
 import { useFileSystem } from "@/context/FileContext"
 import { useSettings } from "@/context/SettingContext"
 import { useSocket } from "@/context/SocketContext"
+import { useRunCode } from "@/context/RunCodeContext"
 import usePageEvents from "@/hooks/usePageEvents"
 import useResponsive from "@/hooks/useResponsive"
 import { editorThemes } from "@/resources/Themes"
 import { FileSystemItem } from "@/types/file"
 import { SocketEvent } from "@/types/socket"
+import { RunDiagnostic } from "@/types/run"
 import { color } from "@uiw/codemirror-extensions-color"
 import { hyperLink } from "@uiw/codemirror-extensions-hyper-link"
 import { LanguageName, loadLanguage } from "@uiw/codemirror-extensions-langs"
+import { Diagnostic, lintGutter, linter } from "@codemirror/lint"
 import CodeMirror, {
     Extension,
     scrollPastEnd,
@@ -27,6 +30,7 @@ function Editor() {
     const { activeFile, setActiveFile } = useFileSystem()
     const { theme, language, fontSize } = useSettings()
     const { socket } = useSocket()
+    const { diagnostics, diagnosticFileId } = useRunCode()
     const { viewHeight } = useResponsive()
     const [timeOut, setTimeOut] = useState(setTimeout(() => {}, 0))
     const filteredUsers = useMemo(
@@ -40,6 +44,46 @@ function Editor() {
     const lastSelectionRef = useRef<{ from: number; to: number }>({ from: 0, to: 0 })
     const cursorMoveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+    const activeFileDiagnostics = useMemo(
+        () =>
+            activeFile && diagnosticFileId === activeFile.id ? diagnostics : [],
+        [activeFile, diagnosticFileId, diagnostics],
+    )
+
+    const createDiagnosticsForView = useCallback(
+        (
+            view: CM6EditorView,
+            fileDiagnostics: RunDiagnostic[],
+        ): Diagnostic[] => {
+            if (!fileDiagnostics.length) return []
+            return fileDiagnostics
+                .map((item) => {
+                    const safeLineNumber = Math.max(
+                        1,
+                        Math.min(item.line, view.state.doc.lines),
+                    )
+                    const line = view.state.doc.line(safeLineNumber)
+                    const safeColumn =
+                        typeof item.column === "number" && item.column > 0
+                            ? Math.min(item.column, line.length + 1)
+                            : 1
+                    const from = line.from + safeColumn - 1
+                    const docEnd = view.state.doc.length
+                    const safeFrom = Math.min(from, docEnd)
+                    const to = line.to > safeFrom ? line.to : Math.min(safeFrom + 1, docEnd)
+                    return {
+                        from: safeFrom,
+                        to,
+                        severity: "error",
+                        message: item.message,
+                        source: "runtime",
+                    } as Diagnostic
+                })
+                .slice(0, 25)
+        },
+        [],
+    )
 
     const onCodeChange = (code: string) => {
         if (!activeFile) return
@@ -161,6 +205,21 @@ function Editor() {
             collaborativeHighlighting(),
             CM6EditorView.updateListener.of(handleSelectionChange),
             scrollPastEnd(),
+            linter((view) => createDiagnosticsForView(view, activeFileDiagnostics)),
+            lintGutter(),
+            CM6EditorView.theme({
+                ".cm-lintRange-error": {
+                    backgroundColor: "transparent",
+                    textDecoration: "underline wavy #ef4444",
+                    textUnderlineOffset: "2px",
+                },
+                ".cm-lintMarker-error": {
+                    color: "#ef4444",
+                },
+                ".cm-diagnosticText": {
+                    color: "#fca5a5",
+                },
+            }),
         ]
         const langExt = loadLanguage(language.toLowerCase() as LanguageName)
         if (langExt) {
@@ -175,7 +234,13 @@ function Editor() {
         }
 
         setExtensions(extensions)
-    }, [filteredUsers, language, handleSelectionChange])
+    }, [
+        activeFileDiagnostics,
+        createDiagnosticsForView,
+        filteredUsers,
+        handleSelectionChange,
+        language,
+    ])
 
     // Update remote users when filteredUsers changes and once the view is ready
     useEffect(() => {

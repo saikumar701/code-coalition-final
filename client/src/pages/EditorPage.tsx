@@ -118,11 +118,16 @@ const EditorPage = () => {
             roomId: routeRoomId,
             username,
             sessionId: getClientSessionId(),
+            mode: currentUser.isAdmin ? "create" : "join",
         };
         const isJoinedInThisRoom =
             status === USER_STATUS.JOINED && currentUser.roomId === routeRoomId;
         const isAttemptingJoinInThisRoom =
             status === USER_STATUS.ATTEMPTING_JOIN &&
+            currentUser.roomId === routeRoomId &&
+            currentUser.username === username;
+        const isPendingApprovalInThisRoom =
+            status === USER_STATUS.PENDING_APPROVAL &&
             currentUser.roomId === routeRoomId &&
             currentUser.username === username;
 
@@ -133,7 +138,11 @@ const EditorPage = () => {
             setCurrentUser(nextUser);
         }
 
-        if (isJoinedInThisRoom || isAttemptingJoinInThisRoom) {
+        if (
+            isJoinedInThisRoom ||
+            isAttemptingJoinInThisRoom ||
+            isPendingApprovalInThisRoom
+        ) {
             return;
         }
 
@@ -144,6 +153,7 @@ const EditorPage = () => {
         // Buffered emit handles both connected and connecting states.
         socket.emit(SocketEvent.JOIN_REQUEST, joinPayload);
     }, [
+        currentUser.isAdmin,
         currentUser.roomId,
         currentUser.username,
         routeRoomId,
@@ -160,7 +170,8 @@ const EditorPage = () => {
         const handleReconnect = () => {
             if (
                 status !== USER_STATUS.JOINED &&
-                status !== USER_STATUS.ATTEMPTING_JOIN
+                status !== USER_STATUS.ATTEMPTING_JOIN &&
+                status !== USER_STATUS.PENDING_APPROVAL
             ) {
                 return;
             }
@@ -170,6 +181,7 @@ const EditorPage = () => {
                 roomId: routeRoomId,
                 username,
                 sessionId: getClientSessionId(),
+                mode: currentUser.isAdmin ? "create" : "join",
             });
         };
 
@@ -177,7 +189,14 @@ const EditorPage = () => {
         return () => {
             socket.off("connect", handleReconnect);
         };
-    }, [currentUser.roomId, currentUser.username, routeRoomId, socket, status]);
+    }, [
+        currentUser.isAdmin,
+        currentUser.roomId,
+        currentUser.username,
+        routeRoomId,
+        socket,
+        status,
+    ]);
 
     const renderActiveSidebarView = () => {
         switch (activeSidebarItem) {
